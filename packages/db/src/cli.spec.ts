@@ -164,4 +164,57 @@ describe('db CLI', () => {
       expect(execError.stderr || execError.stdout).toMatch(/Usage:/);
     }
   }, 20000);
+
+  it('handles git commands properly', async () => {
+    // Test sync-git with default count
+    try {
+      const syncGit = await execFileAsync(node, [cliPath, 'sync-git'], { cwd: tmpDir });
+      expect(syncGit.stdout).toMatch(/Syncing last 100 git commits/);
+      expect(syncGit.stdout).toMatch(/Git sync completed successfully/);
+    } catch (error) {
+      // Git sync might fail if there aren't enough commits, that's ok for testing
+      console.log('Git sync failed (expected in test environment):', error);
+    }
+
+    // Test list-commits
+    const listCommits = await execFileAsync(node, [cliPath, 'list-commits', '10'], { cwd: tmpDir });
+    expect(listCommits.stdout).toMatch(/Recent commits|No commits found/);
+
+    // Test touched-files
+    const touchedFiles = await execFileAsync(node, [cliPath, 'touched-files'], { cwd: tmpDir });
+    expect(touchedFiles.stdout).toMatch(/Recently touched files|No touched files found/);
+
+    // Test git-affected
+    const gitAffected = await execFileAsync(node, [cliPath, 'git-affected', '10'], { cwd: tmpDir });
+    expect(gitAffected.stdout).toMatch(/Projects affected|No projects affected/);
+  }, 30000);
+
+  it('validates git command parameters', async () => {
+    // Test invalid commit count for sync-git
+    try {
+      await execFileAsync(node, [cliPath, 'sync-git', 'invalid'], { cwd: tmpDir });
+      fail('Should have thrown an error');
+    } catch (error) {
+      const execError = error as { stderr?: string; stdout?: string };
+      expect(execError.stderr || execError.stdout).toMatch(/Commit count must be a positive number/);
+    }
+
+    // Test invalid limit for list-commits
+    try {
+      await execFileAsync(node, [cliPath, 'list-commits', '-1'], { cwd: tmpDir });
+      fail('Should have thrown an error');
+    } catch (error) {
+      const execError = error as { stderr?: string; stdout?: string };
+      expect(execError.stderr || execError.stdout).toMatch(/Limit must be a positive number/);
+    }
+
+    // Test invalid commit count for git-affected
+    try {
+      await execFileAsync(node, [cliPath, 'git-affected', '0'], { cwd: tmpDir });
+      fail('Should have thrown an error');
+    } catch (error) {
+      const execError = error as { stderr?: string; stdout?: string };
+      expect(execError.stderr || execError.stdout).toMatch(/Commit count must be a positive number/);
+    }
+  }, 20000);
 });

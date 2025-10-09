@@ -5,6 +5,7 @@ type Sqlite3Module = typeof import('sqlite3');
 const sqlite3: Sqlite3Module = createRequire(import.meta.url)('sqlite3');
 import * as path from 'path';
 import * as fs from 'fs';
+import { execSync } from 'child_process';
 import { createProjectGraphAsync } from '@nx/devkit';
 import type { ProjectGraph, ProjectGraphProjectNode } from '@nx/devkit';
 
@@ -25,6 +26,23 @@ export interface ProjectFile {
   file_path: string;
   file_type?: string;
   added_at?: string;
+}
+
+export interface GitCommit {
+  id?: number;
+  hash: string;
+  author: string;
+  date: string;
+  message: string;
+  created_at?: string;
+}
+
+export interface TouchedFile {
+  id?: number;
+  commit_id: number;
+  file_path: string;
+  change_type: string; // A (added), M (modified), D (deleted), R (renamed)
+  created_at?: string;
 }
 
 export class ProjectDatabase {
@@ -63,9 +81,34 @@ export class ProjectDatabase {
       )
     `;
 
+    const createCommitsTable = `
+      CREATE TABLE IF NOT EXISTS git_commits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hash TEXT UNIQUE NOT NULL,
+        author TEXT NOT NULL,
+        date TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+
+    const createTouchedFilesTable = `
+      CREATE TABLE IF NOT EXISTS touched_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        commit_id INTEGER NOT NULL,
+        file_path TEXT NOT NULL,
+        change_type TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (commit_id) REFERENCES git_commits (id) ON DELETE CASCADE,
+        UNIQUE(commit_id, file_path)
+      )
+    `;
+
     this.db.serialize(() => {
       this.db.run(createProjectsTable);
       this.db.run(createFilesTable);
+      this.db.run(createCommitsTable);
+      this.db.run(createTouchedFilesTable);
     });
   }
 
@@ -459,6 +502,189 @@ export class ProjectDatabase {
     };
 
     await scanDirectory(rootPath);
+  }
+
+  // Git commit tracking methods
+  async syncGitCommits(commitCount = 100): Promise<void> {
+    try {
+      // Get commit information using git log
+      const gitLogOutput = execSync(
+        `git log --oneline --name-status -${commitCount} --pretty=format:"%H|%an|%ad|%s" --date=iso`,
+        { encoding: 'utf8', cwd: process.cwd() }
+      );
+
+      const lines = gitLogOutput.split('\n').filter(line => line.trim());
+      let currentCommit: Partial<GitCommit> | null = null;
+      const touchedFiles: Array<{ filePath: string; changeType: string }> = [];
+
+      for (const line of lines) {
+        if (line.includes('|')) {
+          // This is a commit line
+          if (currentCommit && touchedFiles.length > 0) {
+            // Save the previous commit and its files
+            await this.saveCommitWithFiles(currentCommit as GitCommit, touchedFiles);
+            touchedFiles.length = 0; // Clear the array
+          }
+
+          const [hash, author, date, message] = line.split('|');
+          currentCommit = {
+            hash: hash.trim(),
+            author: author.trim(),
+            date: date.trim(),
+            message: message.trim()
+          };
+        } else if (currentCommit && line.match(/^[AMDRT]\s+/)) {
+          // This is a file change line (A/M/D/R/T followed by filename)
+          const changeType = line.charAt(0);
+          const filePath = line.substring(2).trim();
+          touchedFiles.push({ filePath, changeType });
+        }
+      }
+
+      // Don't forget the last commit
+      if (currentCommit && touchedFiles.length > 0) {
+        await this.saveCommitWithFiles(currentCommit as GitCommit, touchedFiles);
+      }
+
+      console.log(`Synced ${commitCount} git commits to database`);
+    } catch (error) {
+      throw new Error(`Failed to sync git commits: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  private async saveCommitWithFiles(
+    commit: GitCommit, 
+    touchedFiles: Array<{ filePath: string; changeType: string }>
+  ): Promise<void> {
+    // First, insert or get the commit
+    const commitId = await this.insertCommit(commit);
+
+    // Then insert all touched files for this commit
+    for (const file of touchedFiles) {
+      await this.insertTouchedFile(commitId, file.filePath, file.changeType);
+    }
+  }
+
+  private async insertCommit(commit: GitCommit): Promise<number> {
+    return new Promise((resolve, reject) => {
+      // Use INSERT OR IGNORE to avoid duplicates
+      const stmt = this.db.prepare(`
+        INSERT OR IGNORE INTO git_commits (hash, author, date, message) 
+        VALUES (?, ?, ?, ?)
+      `);
+      stmt.run([commit.hash, commit.author, commit.date, commit.message], function(err) {
+        if (err) {
+          reject(err);
+        } else {
+          // If we inserted a new row, use the lastID, otherwise get the existing ID
+          if (this.lastID > 0) {
+            resolve(this.lastID);
+          } else {
+            // Get the existing commit ID
+            reject(new Error('Failed to insert or retrieve commit'));
+          }
+        }
+      });
+      stmt.finalize();
+    });
+  }
+
+  private async insertTouchedFile(commitId: number, filePath: string, changeType: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO touched_files (commit_id, file_path, change_type) 
+        VALUES (?, ?, ?)
+      `);
+      stmt.run([commitId, filePath, changeType], (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+      stmt.finalize();
+    });
+  }
+
+  async getCommits(limit = 50): Promise<GitCommit[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM git_commits ORDER BY date DESC LIMIT ?', 
+        [limit], 
+        (err, rows) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as GitCommit[]);
+          }
+        }
+      );
+    });
+  }
+
+  async getTouchedFiles(commitHash?: string): Promise<TouchedFile[]> {
+    return new Promise((resolve, reject) => {
+      let query = `
+        SELECT tf.*, gc.hash, gc.author, gc.date, gc.message 
+        FROM touched_files tf
+        JOIN git_commits gc ON tf.commit_id = gc.id
+      `;
+      const params: string[] = [];
+
+      if (commitHash) {
+        query += ' WHERE gc.hash = ?';
+        params.push(commitHash);
+      }
+
+      query += ' ORDER BY gc.date DESC, tf.file_path';
+
+      this.db.all(query, params, (err, rows) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(rows as TouchedFile[]);
+        }
+      });
+    });
+  }
+
+  async getFilesTouchedInLastCommits(commitCount = 100): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const query = `
+        SELECT DISTINCT tf.file_path 
+        FROM touched_files tf
+        JOIN git_commits gc ON tf.commit_id = gc.id
+        ORDER BY gc.date DESC
+        LIMIT ?
+      `;
+      
+      this.db.all(query, [commitCount * 10], (err, rows: { file_path: string }[]) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(rows.map(row => row.file_path));
+        }
+      });
+    });
+  }
+
+  async getProjectsAffectedByCommits(commitCount = 100): Promise<string[]> {
+    try {
+      const touchedFiles = await this.getFilesTouchedInLastCommits(commitCount);
+      const affectedProjects = new Set<string>();
+
+      for (const filePath of touchedFiles) {
+        const projects = await this.getFileProjects(filePath);
+        for (const project of projects) {
+          affectedProjects.add(project.name);
+        }
+      }
+
+      return Array.from(affectedProjects);
+    } catch (error) {
+      console.warn('Could not determine projects affected by commits:', error);
+      return [];
+    }
   }
 
   close(): void {

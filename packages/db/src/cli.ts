@@ -27,6 +27,12 @@ Commands:
   affected <file1> [file2...]            Show projects affected by changed files
   by-type <type>                         List projects by type (application, library, etc.)
   by-tag <tag>                           List projects by tag
+  
+  Git Commands:
+  sync-git [commit-count]                Sync git commits and touched files (default: 100 commits)
+  list-commits [limit]                   List recent git commits from database (default: 50)
+  touched-files [commit-hash]            List files touched in commits (optionally for specific commit)
+  git-affected [commit-count]            Show projects affected by recent git changes (default: 100)
 
 Examples:
   nx-tools-db sync-nx                    # Sync all Nx projects
@@ -38,6 +44,10 @@ Examples:
   nx-tools-db affected "src/lib/utils.ts" "package.json"
   nx-tools-db by-type "application"
   nx-tools-db by-tag "scope:frontend"
+  nx-tools-db sync-git 50                # Sync last 50 git commits
+  nx-tools-db list-commits 20            # Show last 20 commits
+  nx-tools-db touched-files abc123       # Show files touched in commit abc123
+  nx-tools-db git-affected 50            # Show projects affected by last 50 commits
 `);
     process.exit(1);
   }
@@ -254,6 +264,81 @@ Examples:
           console.log(`Projects with tag "${tag}":`);
           projects.forEach(project => {
             console.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''} [${project.tags}]`);
+          });
+        }
+        break;
+      }
+
+      case 'sync-git': {
+        const [commitCountStr] = args.slice(1);
+        const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
+        if (isNaN(commitCount) || commitCount <= 0) {
+          console.error('Commit count must be a positive number');
+          process.exit(1);
+        }
+        console.log(`Syncing last ${commitCount} git commits...`);
+        await db.syncGitCommits(commitCount);
+        console.log('Git sync completed successfully');
+        break;
+      }
+
+      case 'list-commits': {
+        const [limitStr] = args.slice(1);
+        const limit = limitStr ? parseInt(limitStr, 10) : 50;
+        if (isNaN(limit) || limit <= 0) {
+          console.error('Limit must be a positive number');
+          process.exit(1);
+        }
+        const commits = await db.getCommits(limit);
+        if (commits.length === 0) {
+          console.log('No commits found in database');
+        } else {
+          console.log(`Recent commits (last ${commits.length}):`);
+          commits.forEach(commit => {
+            const shortHash = commit.hash.substring(0, 8);
+            const shortMessage = commit.message.length > 60 
+              ? commit.message.substring(0, 60) + '...' 
+              : commit.message;
+            console.log(`  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`);
+          });
+        }
+        break;
+      }
+
+      case 'touched-files': {
+        const [commitHash] = args.slice(1);
+        const touchedFiles = await db.getTouchedFiles(commitHash);
+        if (touchedFiles.length === 0) {
+          const msg = commitHash 
+            ? `No files found for commit ${commitHash}` 
+            : 'No touched files found in database';
+          console.log(msg);
+        } else {
+          const msg = commitHash 
+            ? `Files touched in commit ${commitHash}:` 
+            : 'Recently touched files:';
+          console.log(msg);
+          touchedFiles.forEach(file => {
+            console.log(`  ${file.change_type} ${file.file_path}`);
+          });
+        }
+        break;
+      }
+
+      case 'git-affected': {
+        const [commitCountStr] = args.slice(1);
+        const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
+        if (isNaN(commitCount) || commitCount <= 0) {
+          console.error('Commit count must be a positive number');
+          process.exit(1);
+        }
+        const affectedProjects = await db.getProjectsAffectedByCommits(commitCount);
+        if (affectedProjects.length === 0) {
+          console.log(`No projects affected by changes in last ${commitCount} commits`);
+        } else {
+          console.log(`Projects affected by changes in last ${commitCount} commits:`);
+          affectedProjects.forEach(project => {
+            console.log(`  ${project}`);
           });
         }
         break;
