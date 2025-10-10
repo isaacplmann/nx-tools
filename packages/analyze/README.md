@@ -1,4 +1,4 @@
-# @nx-tools/db
+# @nx-tools/analyze
 
 A SQLite-based database for tracking which files belong to each project in your repository.
 
@@ -16,7 +16,7 @@ A SQLite-based database for tracking which files belong to each project in your 
 ## Installation
 
 ```bash
-npm install @nx-tools/db
+npm install @nx-tools/analyze
 ```
 
 ## Usage
@@ -24,7 +24,7 @@ npm install @nx-tools/db
 ### Programmatic API
 
 ```typescript
-import { ProjectDatabase } from '@nx-tools/db';
+import { ProjectDatabase } from '@nx-tools/analyze';
 
 // Create a database instance
 const db = new ProjectDatabase('./my-projects.db');
@@ -42,7 +42,10 @@ const dependencies = await db.getProjectDependencies('my-app');
 const dependents = await db.getProjectDependents('shared-lib');
 
 // Find affected projects by file changes
-const affected = await db.getAffectedProjects(['src/shared/utils.ts', 'package.json']);
+const affected = await db.getAffectedProjects([
+  'src/shared/utils.ts',
+  'package.json',
+]);
 
 // Traditional file operations still work
 const files = await db.getProjectFiles('my-app');
@@ -87,21 +90,25 @@ nx-tools-db delete-project "old-project"
 ### ProjectDatabase
 
 #### Constructor
+
 - `new ProjectDatabase(dbPath?: string)` - Creates a new database instance
 
 #### Project Methods
+
 - `createProject(name: string, description?: string): Promise<number>` - Create a new project
 - `getProject(name: string): Promise<Project | null>` - Get a project by name
 - `getAllProjects(): Promise<Project[]>` - Get all projects
 - `deleteProject(name: string): Promise<boolean>` - Delete a project
 
 #### File Methods
+
 - `addFileToProject(projectName: string, filePath: string, fileType?: string): Promise<void>` - Add a file to a project
 - `removeFileFromProject(projectName: string, filePath: string): Promise<boolean>` - Remove a file from a project
 - `getProjectFiles(projectName: string): Promise<ProjectFile[]>` - Get all files in a project
 - `getFileProjects(filePath: string): Promise<Project[]>` - Get all projects containing a file
 
 #### Utility Methods
+
 - `scanRepositoryFiles(rootPath: string, projectName: string): Promise<void>` - Scan a directory and add files to a project
 - `close(): void` - Close the database connection
 
@@ -129,12 +136,14 @@ interface ProjectFile {
 The database uses two main tables:
 
 ### projects
+
 - `id` (INTEGER PRIMARY KEY) - Auto-incrementing project ID
 - `name` (TEXT UNIQUE NOT NULL) - Project name
 - `description` (TEXT) - Optional project description
 - `created_at` (DATETIME) - Creation timestamp
 
 ### project_files
+
 - `id` (INTEGER PRIMARY KEY) - Auto-incrementing file ID
 - `project_id` (INTEGER) - Foreign key to projects.id
 - `file_path` (TEXT) - Relative path to the file

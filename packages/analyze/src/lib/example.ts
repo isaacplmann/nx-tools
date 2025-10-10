@@ -10,7 +10,9 @@ async function example() {
     // Sync with Nx workspace - this automatically discovers all projects
     console.log('Syncing with Nx workspace...');
     const projectGraph = await db.syncWithNxWorkspace();
-    console.log(`Discovered ${Object.keys(projectGraph.nodes).length} Nx projects\n`);
+    console.log(
+      `Discovered ${Object.keys(projectGraph.nodes).length} Nx projects\n`
+    );
 
     // Query all projects (now includes Nx projects with metadata)
     console.log('All projects in workspace:');
@@ -18,7 +20,11 @@ async function example() {
     projects.forEach((project: Project) => {
       const typeInfo = project.project_type ? ` (${project.project_type})` : '';
       const tagInfo = project.tags ? ` [${project.tags}]` : '';
-      console.log(`- ${project.name}${typeInfo}: ${project.description || 'No description'}${tagInfo}`);
+      console.log(
+        `- ${project.name}${typeInfo}: ${
+          project.description || 'No description'
+        }${tagInfo}`
+      );
     });
 
     // Example: Get projects by type
@@ -45,7 +51,7 @@ async function example() {
       console.log(`\nDependencies of "${firstProject.name}":`);
       const dependencies = await db.getProjectDependencies(firstProject.name);
       if (dependencies.length > 0) {
-        dependencies.forEach(dep => console.log(`- ${dep}`));
+        dependencies.forEach((dep) => console.log(`- ${dep}`));
       } else {
         console.log('No dependencies found');
       }
@@ -53,7 +59,7 @@ async function example() {
       console.log(`\nProjects that depend on "${firstProject.name}":`);
       const dependents = await db.getProjectDependents(firstProject.name);
       if (dependents.length > 0) {
-        dependents.forEach(dep => console.log(`- ${dep}`));
+        dependents.forEach((dep) => console.log(`- ${dep}`));
       } else {
         console.log('No dependents found');
       }
@@ -61,9 +67,12 @@ async function example() {
 
     // Example: Find affected projects by file changes
     console.log('\nFinding projects affected by package.json changes:');
-    const affectedProjects = await db.getAffectedProjects(['package.json', 'nx.json']);
+    const affectedProjects = await db.getAffectedProjects([
+      'package.json',
+      'nx.json',
+    ]);
     if (affectedProjects.length > 0) {
-      affectedProjects.forEach(project => console.log(`- ${project}`));
+      affectedProjects.forEach((project) => console.log(`- ${project}`));
     } else {
       console.log('No projects affected');
     }
@@ -84,7 +93,6 @@ async function example() {
         console.log('No files found for this project');
       }
     }
-
   } catch (error) {
     console.error('Error:', error);
   } finally {

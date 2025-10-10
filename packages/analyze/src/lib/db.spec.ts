@@ -42,9 +42,11 @@ describe('ProjectDatabase', () => {
     expect(proj?.name).toBe('proj-a');
 
     const all = await pdb.getAllProjects();
-    expect(all.some(p => p.name === 'proj-a')).toBe(true);
+    expect(all.some((p) => p.name === 'proj-a')).toBe(true);
 
-    const updated = await pdb.updateProject('proj-a', { description: 'Updated' });
+    const updated = await pdb.updateProject('proj-a', {
+      description: 'Updated',
+    });
     expect(updated).toBe(true);
 
     const proj2 = await pdb.getProject('proj-a');
@@ -69,35 +71,54 @@ describe('ProjectDatabase', () => {
     expect(typeof id).toBe('number');
 
     const byType = await pdb.getProjectsByType('application');
-    expect(byType.some(p => p.name === 'proj-nx')).toBe(true);
+    expect(byType.some((p) => p.name === 'proj-nx')).toBe(true);
 
     const byTag = await pdb.getProjectsByTag('type:feature');
-    expect(byTag.some(p => p.name === 'proj-nx')).toBe(true);
+    expect(byTag.some((p) => p.name === 'proj-nx')).toBe(true);
   });
 
   it('can add, list, and remove files for a project', async () => {
     // ensure project exists
     await pdb.createProject('proj-files', 'with files');
 
-    await pdb.addFileToProject('proj-files', 'packages/proj-files/src/index.ts', 'ts');
-    await pdb.addFileToProject('proj-files', 'packages/proj-files/README.md', 'md');
+    await pdb.addFileToProject(
+      'proj-files',
+      'packages/proj-files/src/index.ts',
+      'ts'
+    );
+    await pdb.addFileToProject(
+      'proj-files',
+      'packages/proj-files/README.md',
+      'md'
+    );
 
     const files = await pdb.getProjectFiles('proj-files');
     expect(files.length).toBeGreaterThanOrEqual(2);
-    expect(files.some(f => f.file_path === 'packages/proj-files/src/index.ts')).toBe(true);
+    expect(
+      files.some((f) => f.file_path === 'packages/proj-files/src/index.ts')
+    ).toBe(true);
 
-    const projectsForFile = await pdb.getFileProjects('packages/proj-files/src/index.ts');
-    expect(projectsForFile.some(p => p.name === 'proj-files')).toBe(true);
+    const projectsForFile = await pdb.getFileProjects(
+      'packages/proj-files/src/index.ts'
+    );
+    expect(projectsForFile.some((p) => p.name === 'proj-files')).toBe(true);
 
-    const removed = await pdb.removeFileFromProject('proj-files', 'packages/proj-files/src/index.ts');
+    const removed = await pdb.removeFileFromProject(
+      'proj-files',
+      'packages/proj-files/src/index.ts'
+    );
     expect(removed).toBe(true);
 
     const filesAfter = await pdb.getProjectFiles('proj-files');
-    expect(filesAfter.some(f => f.file_path === 'packages/proj-files/src/index.ts')).toBe(false);
+    expect(
+      filesAfter.some((f) => f.file_path === 'packages/proj-files/src/index.ts')
+    ).toBe(false);
   });
 
   it('throws when adding a file to a non-existent project', async () => {
-    await expect(pdb.addFileToProject('no-such-proj', 'some/path', 'txt')).rejects.toThrow();
+    await expect(
+      pdb.addFileToProject('no-such-proj', 'some/path', 'txt')
+    ).rejects.toThrow();
   });
 
   it('can handle git commit functionality', async () => {
@@ -128,21 +149,24 @@ describe('ProjectDatabase', () => {
     // Test actual git functionality if in a git repo
     try {
       await pdb.syncGitCommits(5); // Sync just a few commits for testing
-      
+
       const commits = await pdb.getCommits(10);
       expect(Array.isArray(commits)).toBe(true);
-      
+
       const touchedFiles = await pdb.getTouchedFiles();
       expect(Array.isArray(touchedFiles)).toBe(true);
-      
+
       const filesTouched = await pdb.getFilesTouchedInLastCommits(5);
       expect(Array.isArray(filesTouched)).toBe(true);
-      
+
       const affectedProjects = await pdb.getProjectsAffectedByCommits(5);
       expect(Array.isArray(affectedProjects)).toBe(true);
     } catch (error) {
       // Git operations might fail in test environment, that's expected
-      console.log('Git operations failed (expected in test environment):', error);
+      console.log(
+        'Git operations failed (expected in test environment):',
+        error
+      );
     }
   });
 
@@ -166,7 +190,7 @@ describe('ProjectDatabase', () => {
     // Test that the methods return the expected data structure even with no data
     const commits = await pdb.getCommits(1);
     expect(Array.isArray(commits)).toBe(true);
-    
+
     if (commits.length > 0) {
       const commit = commits[0];
       expect(commit).toHaveProperty('id');
@@ -178,7 +202,7 @@ describe('ProjectDatabase', () => {
 
     const touchedFiles = await pdb.getTouchedFiles();
     expect(Array.isArray(touchedFiles)).toBe(true);
-    
+
     if (touchedFiles.length > 0) {
       const file = touchedFiles[0];
       expect(file).toHaveProperty('file_path');

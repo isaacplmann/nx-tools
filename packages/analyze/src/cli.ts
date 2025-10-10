@@ -7,7 +7,7 @@ import * as path from 'path';
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
-  
+
   if (!command) {
     console.log(`
 Usage: nx-tools-db <command> [options]
@@ -66,7 +66,11 @@ Examples:
         const [workspaceRoot] = args.slice(1);
         console.log('Syncing Nx workspace to database...');
         const projectGraph = await db.syncWithNxWorkspace(workspaceRoot);
-        console.log(`Successfully synced ${Object.keys(projectGraph.nodes).length} projects`);
+        console.log(
+          `Successfully synced ${
+            Object.keys(projectGraph.nodes).length
+          } projects`
+        );
         break;
       }
 
@@ -87,8 +91,12 @@ Examples:
           console.log('No projects found');
         } else {
           console.log('Projects:');
-          projects.forEach(project => {
-            console.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''}`);
+          projects.forEach((project) => {
+            console.log(
+              `  ${project.name}${
+                project.description ? ` - ${project.description}` : ''
+              }`
+            );
           });
         }
         break;
@@ -130,7 +138,9 @@ Examples:
         if (removed) {
           console.log(`Removed "${filePath}" from project "${projectName}"`);
         } else {
-          console.log(`File "${filePath}" not found in project "${projectName}"`);
+          console.log(
+            `File "${filePath}" not found in project "${projectName}"`
+          );
         }
         break;
       }
@@ -146,8 +156,12 @@ Examples:
           console.log(`No files found in project "${projectName}"`);
         } else {
           console.log(`Files in project "${projectName}":`);
-          files.forEach(file => {
-            console.log(`  ${file.file_path}${file.file_type ? ` (${file.file_type})` : ''}`);
+          files.forEach((file) => {
+            console.log(
+              `  ${file.file_path}${
+                file.file_type ? ` (${file.file_type})` : ''
+              }`
+            );
           });
         }
         break;
@@ -164,7 +178,7 @@ Examples:
           console.log(`File "${filePath}" not found in any project`);
         } else {
           console.log(`File "${filePath}" found in projects:`);
-          projects.forEach(project => {
+          projects.forEach((project) => {
             console.log(`  ${project.name}`);
           });
         }
@@ -203,7 +217,7 @@ Examples:
           console.log(`No dependencies recorded for "${filePath}"`);
         } else {
           console.log(`Dependencies of "${filePath}":`);
-          deps.forEach(d => console.log(`  ${d}`));
+          deps.forEach((d) => console.log(`  ${d}`));
         }
         break;
       }
@@ -219,7 +233,7 @@ Examples:
           console.log(`No dependents recorded for "${filePath}"`);
         } else {
           console.log(`Files depending on "${filePath}":`);
-          dependents.forEach(f => console.log(`  ${f}`));
+          dependents.forEach((f) => console.log(`  ${f}`));
         }
         break;
       }
@@ -235,7 +249,7 @@ Examples:
           console.log(`Project "${projectName}" has no dependencies`);
         } else {
           console.log(`Dependencies of "${projectName}":`);
-          dependencies.forEach(dep => {
+          dependencies.forEach((dep) => {
             console.log(`  ${dep}`);
           });
         }
@@ -253,7 +267,7 @@ Examples:
           console.log(`No projects depend on "${projectName}"`);
         } else {
           console.log(`Projects that depend on "${projectName}":`);
-          dependents.forEach(dep => {
+          dependents.forEach((dep) => {
             console.log(`  ${dep}`);
           });
         }
@@ -270,8 +284,10 @@ Examples:
         if (affectedProjects.length === 0) {
           console.log('No projects are affected by the changed files');
         } else {
-          console.log(`Projects affected by changes to: ${changedFiles.join(', ')}`);
-          affectedProjects.forEach(project => {
+          console.log(
+            `Projects affected by changes to: ${changedFiles.join(', ')}`
+          );
+          affectedProjects.forEach((project) => {
             console.log(`  ${project}`);
           });
         }
@@ -289,8 +305,12 @@ Examples:
           console.log(`No projects found with type "${projectType}"`);
         } else {
           console.log(`Projects with type "${projectType}":`);
-          projects.forEach(project => {
-            console.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''}`);
+          projects.forEach((project) => {
+            console.log(
+              `  ${project.name}${
+                project.description ? ` - ${project.description}` : ''
+              }`
+            );
           });
         }
         break;
@@ -307,8 +327,12 @@ Examples:
           console.log(`No projects found with tag "${tag}"`);
         } else {
           console.log(`Projects with tag "${tag}":`);
-          projects.forEach(project => {
-            console.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''} [${project.tags}]`);
+          projects.forEach((project) => {
+            console.log(
+              `  ${project.name}${
+                project.description ? ` - ${project.description}` : ''
+              } [${project.tags}]`
+            );
           });
         }
         break;
@@ -339,12 +363,15 @@ Examples:
           console.log('No commits found in database');
         } else {
           console.log(`Recent commits (last ${commits.length}):`);
-          commits.forEach(commit => {
+          commits.forEach((commit) => {
             const shortHash = commit.hash.substring(0, 8);
-            const shortMessage = commit.message.length > 60 
-              ? commit.message.substring(0, 60) + '...' 
-              : commit.message;
-            console.log(`  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`);
+            const shortMessage =
+              commit.message.length > 60
+                ? commit.message.substring(0, 60) + '...'
+                : commit.message;
+            console.log(
+              `  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`
+            );
           });
         }
         break;
@@ -354,16 +381,16 @@ Examples:
         const [commitHash] = args.slice(1);
         const touchedFiles = await db.getTouchedFiles(commitHash);
         if (touchedFiles.length === 0) {
-          const msg = commitHash 
-            ? `No files found for commit ${commitHash}` 
+          const msg = commitHash
+            ? `No files found for commit ${commitHash}`
             : 'No touched files found in database';
           console.log(msg);
         } else {
-          const msg = commitHash 
-            ? `Files touched in commit ${commitHash}:` 
+          const msg = commitHash
+            ? `Files touched in commit ${commitHash}:`
             : 'Recently touched files:';
           console.log(msg);
-          touchedFiles.forEach(file => {
+          touchedFiles.forEach((file) => {
             console.log(`  ${file.change_type} ${file.file_path}`);
           });
         }
@@ -377,12 +404,18 @@ Examples:
           console.error('Commit count must be a positive number');
           process.exit(1);
         }
-        const affectedProjects = await db.getProjectsAffectedByCommits(commitCount);
+        const affectedProjects = await db.getProjectsAffectedByCommits(
+          commitCount
+        );
         if (affectedProjects.length === 0) {
-          console.log(`No projects affected by changes in last ${commitCount} commits`);
+          console.log(
+            `No projects affected by changes in last ${commitCount} commits`
+          );
         } else {
-          console.log(`Projects affected by changes in last ${commitCount} commits:`);
-          affectedProjects.forEach(project => {
+          console.log(
+            `Projects affected by changes in last ${commitCount} commits:`
+          );
+          affectedProjects.forEach((project) => {
             console.log(`  ${project}`);
           });
         }

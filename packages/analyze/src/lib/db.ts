@@ -126,29 +126,44 @@ export class ProjectDatabase {
   // Nx integration methods
   async syncWithNxWorkspace(workspaceRoot?: string): Promise<ProjectGraph> {
     process.chdir(workspaceRoot || process.cwd());
-    
+
     try {
       // Read Nx configuration and create project graph
-      const projectGraph = await createProjectGraphAsync({ exitOnError: false });
-      
+      const projectGraph = await createProjectGraphAsync({
+        exitOnError: false,
+      });
+
       // Sync all Nx projects to database
-      for (const [projectName, projectNode] of Object.entries(projectGraph.nodes)) {
+      for (const [projectName, projectNode] of Object.entries(
+        projectGraph.nodes
+      )) {
         await this.syncNxProject(projectName, projectNode);
       }
-      
-      console.log(`Synced ${Object.keys(projectGraph.nodes).length} Nx projects to database`);
+
+      console.log(
+        `Synced ${
+          Object.keys(projectGraph.nodes).length
+        } Nx projects to database`
+      );
       return projectGraph;
     } catch (error) {
-      throw new Error(`Failed to sync with Nx workspace: ${error instanceof Error ? error.message : error}`);
+      throw new Error(
+        `Failed to sync with Nx workspace: ${
+          error instanceof Error ? error.message : error
+        }`
+      );
     }
   }
 
-  private async syncNxProject(projectName: string, projectNode: ProjectGraphProjectNode): Promise<void> {
+  private async syncNxProject(
+    projectName: string,
+    projectNode: ProjectGraphProjectNode
+  ): Promise<void> {
     const { data } = projectNode;
-    
+
     // Create or update project in database
     const existingProject = await this.getProject(projectName);
-    
+
     if (existingProject) {
       // Update existing project
       await this.updateProject(projectName, {
@@ -156,7 +171,7 @@ export class ProjectDatabase {
         project_type: data.projectType,
         source_root: data.sourceRoot,
         root: data.root,
-        tags: data.tags?.join(',')
+        tags: data.tags?.join(','),
       });
     } else {
       // Create new project
@@ -165,7 +180,7 @@ export class ProjectDatabase {
         project_type: data.projectType,
         source_root: data.sourceRoot,
         root: data.root,
-        tags: data.tags?.join(',')
+        tags: data.tags?.join(','),
       });
     }
 
@@ -175,9 +190,12 @@ export class ProjectDatabase {
     }
   }
 
-  private async scanNxProjectFiles(projectName: string, projectRoot: string): Promise<void> {
+  private async scanNxProjectFiles(
+    projectName: string,
+    projectRoot: string
+  ): Promise<void> {
     const fullProjectRoot = path.resolve(projectRoot);
-    
+
     if (!fs.existsSync(fullProjectRoot)) {
       console.warn(`Project root does not exist: ${fullProjectRoot}`);
       return;
@@ -186,22 +204,24 @@ export class ProjectDatabase {
     const scanDirectory = async (dirPath: string): Promise<void> => {
       try {
         const items = fs.readdirSync(dirPath);
-        
+
         for (const item of items) {
           const fullPath = path.join(dirPath, item);
           const relativePath = path.relative(process.cwd(), fullPath);
-          
+
           // Skip hidden files, node_modules, and build outputs
-          if (item.startsWith('.') || 
-              item === 'node_modules' || 
-              item === 'dist' || 
-              item === 'build' ||
-              item === 'coverage') {
+          if (
+            item.startsWith('.') ||
+            item === 'node_modules' ||
+            item === 'dist' ||
+            item === 'build' ||
+            item === 'coverage'
+          ) {
             continue;
           }
 
           const stat = fs.statSync(fullPath);
-          
+
           if (stat.isDirectory()) {
             await scanDirectory(fullPath);
           } else if (stat.isFile()) {
@@ -220,8 +240,10 @@ export class ProjectDatabase {
   // Project methods
   async createProject(name: string, description?: string): Promise<number> {
     return new Promise((resolve, reject) => {
-      const stmt = this.db.prepare('INSERT INTO projects (name, description) VALUES (?, ?)');
-      stmt.run([name, description], function(err: Error | null) {
+      const stmt = this.db.prepare(
+        'INSERT INTO projects (name, description) VALUES (?, ?)'
+      );
+      stmt.run([name, description], function (err: Error | null) {
         if (err) {
           reject(err);
         } else {
@@ -232,112 +254,141 @@ export class ProjectDatabase {
     });
   }
 
-  async createProjectFromNx(name: string, nxData: {
-    description?: string;
-    project_type?: string;
-    source_root?: string;
-    root?: string;
-    tags?: string;
-  }): Promise<number> {
+  async createProjectFromNx(
+    name: string,
+    nxData: {
+      description?: string;
+      project_type?: string;
+      source_root?: string;
+      root?: string;
+      tags?: string;
+    }
+  ): Promise<number> {
     return new Promise((resolve, reject) => {
       const stmt = this.db.prepare(`
         INSERT INTO projects (name, description, project_type, source_root, root, tags) 
         VALUES (?, ?, ?, ?, ?, ?)
       `);
-      stmt.run([
-        name, 
-        nxData.description, 
-        nxData.project_type, 
-        nxData.source_root, 
-        nxData.root, 
-        nxData.tags
-      ], function(err: Error | null) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve((this as unknown as RunResult).lastID as number);
+      stmt.run(
+        [
+          name,
+          nxData.description,
+          nxData.project_type,
+          nxData.source_root,
+          nxData.root,
+          nxData.tags,
+        ],
+        function (err: Error | null) {
+          if (err) {
+            reject(err);
+          } else {
+            resolve((this as unknown as RunResult).lastID as number);
+          }
         }
-      });
+      );
       stmt.finalize();
     });
   }
 
-  async updateProject(name: string, updates: {
-    description?: string;
-    project_type?: string;
-    source_root?: string;
-    root?: string;
-    tags?: string;
-  }): Promise<boolean> {
+  async updateProject(
+    name: string,
+    updates: {
+      description?: string;
+      project_type?: string;
+      source_root?: string;
+      root?: string;
+      tags?: string;
+    }
+  ): Promise<boolean> {
     return new Promise((resolve, reject) => {
       const stmt = this.db.prepare(`
         UPDATE projects 
         SET description = ?, project_type = ?, source_root = ?, root = ?, tags = ?
         WHERE name = ?
       `);
-      stmt.run([
-        updates.description,
-        updates.project_type,
-        updates.source_root,
-        updates.root,
-        updates.tags,
-        name
-      ], function(err: Error | null) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(((this as unknown as RunResult).changes ?? 0) > 0);
+      stmt.run(
+        [
+          updates.description,
+          updates.project_type,
+          updates.source_root,
+          updates.root,
+          updates.tags,
+          name,
+        ],
+        function (err: Error | null) {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(((this as unknown as RunResult).changes ?? 0) > 0);
+          }
         }
-      });
+      );
       stmt.finalize();
     });
   }
 
   async getProject(name: string): Promise<Project | null> {
     return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM projects WHERE name = ?', [name], (err: Error | null, row: unknown) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row as Project || null);
+      this.db.get(
+        'SELECT * FROM projects WHERE name = ?',
+        [name],
+        (err: Error | null, row: unknown) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve((row as Project) || null);
+          }
         }
-      });
+      );
     });
   }
 
   async getAllProjects(): Promise<Project[]> {
     return new Promise((resolve, reject) => {
-      this.db.all('SELECT * FROM projects ORDER BY name', (err: Error | null, rows: unknown[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as Project[]);
+      this.db.all(
+        'SELECT * FROM projects ORDER BY name',
+        (err: Error | null, rows: unknown[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as Project[]);
+          }
         }
-      });
+      );
     });
   }
 
   async deleteProject(name: string): Promise<boolean> {
     return new Promise((resolve, reject) => {
-      this.db.run('DELETE FROM projects WHERE name = ?', [name], function(err: Error | null) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(((this as unknown as RunResult).changes ?? 0) > 0);
+      this.db.run(
+        'DELETE FROM projects WHERE name = ?',
+        [name],
+        function (err: Error | null) {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(((this as unknown as RunResult).changes ?? 0) > 0);
+          }
         }
-      });
+      );
     });
   }
 
   // File methods
-  async addFileToProject(projectName: string, filePath: string, fileType?: string): Promise<void> {
+  async addFileToProject(
+    projectName: string,
+    filePath: string,
+    fileType?: string
+  ): Promise<void> {
     const project = await this.getProject(projectName);
     if (!project) {
       throw new Error(`Project "${projectName}" not found`);
     }
 
     return new Promise((resolve, reject) => {
-      const stmt = this.db.prepare('INSERT OR REPLACE INTO project_files (project_id, file_path, file_type) VALUES (?, ?, ?)');
+      const stmt = this.db.prepare(
+        'INSERT OR REPLACE INTO project_files (project_id, file_path, file_type) VALUES (?, ?, ?)'
+      );
       stmt.run([project.id, filePath, fileType], (err: Error | null) => {
         if (err) {
           reject(err);
@@ -349,21 +400,27 @@ export class ProjectDatabase {
     });
   }
 
-  async removeFileFromProject(projectName: string, filePath: string): Promise<boolean> {
+  async removeFileFromProject(
+    projectName: string,
+    filePath: string
+  ): Promise<boolean> {
     const project = await this.getProject(projectName);
     if (!project) {
       return false;
     }
 
     return new Promise((resolve, reject) => {
-      this.db.run('DELETE FROM project_files WHERE project_id = ? AND file_path = ?', 
-        [project.id, filePath], function(err: Error | null) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(((this as unknown as RunResult).changes ?? 0) > 0);
+      this.db.run(
+        'DELETE FROM project_files WHERE project_id = ? AND file_path = ?',
+        [project.id, filePath],
+        function (err: Error | null) {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(((this as unknown as RunResult).changes ?? 0) > 0);
+          }
         }
-      });
+      );
     });
   }
 
@@ -374,14 +431,17 @@ export class ProjectDatabase {
     }
 
     return new Promise((resolve, reject) => {
-      this.db.all('SELECT * FROM project_files WHERE project_id = ? ORDER BY file_path', 
-        [project.id], (err: Error | null, rows: unknown[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as ProjectFile[]);
+      this.db.all(
+        'SELECT * FROM project_files WHERE project_id = ? ORDER BY file_path',
+        [project.id],
+        (err: Error | null, rows: unknown[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as ProjectFile[]);
+          }
         }
-      });
+      );
     });
   }
 
@@ -406,9 +466,11 @@ export class ProjectDatabase {
   // Nx-specific query methods
   async getProjectDependencies(projectName: string): Promise<string[]> {
     try {
-      const projectGraph = await createProjectGraphAsync({ exitOnError: false });
+      const projectGraph = await createProjectGraphAsync({
+        exitOnError: false,
+      });
       const dependencies = projectGraph.dependencies[projectName] || [];
-      return dependencies.map(dep => dep.target);
+      return dependencies.map((dep) => dep.target);
     } catch (error) {
       console.warn(`Could not get dependencies for ${projectName}:`, error);
       return [];
@@ -417,15 +479,17 @@ export class ProjectDatabase {
 
   async getProjectDependents(projectName: string): Promise<string[]> {
     try {
-      const projectGraph = await createProjectGraphAsync({ exitOnError: false });
+      const projectGraph = await createProjectGraphAsync({
+        exitOnError: false,
+      });
       const dependents: string[] = [];
-      
+
       for (const [project, deps] of Object.entries(projectGraph.dependencies)) {
-        if (deps.some(dep => dep.target === projectName)) {
+        if (deps.some((dep) => dep.target === projectName)) {
           dependents.push(project);
         }
       }
-      
+
       return dependents;
     } catch (error) {
       console.warn(`Could not get dependents for ${projectName}:`, error);
@@ -442,10 +506,10 @@ export class ProjectDatabase {
         const projects = await this.getFileProjects(filePath);
         for (const project of projects) {
           affectedProjects.add(project.name);
-          
+
           // Also add dependent projects
           const dependents = await this.getProjectDependents(project.name);
-          dependents.forEach(dep => affectedProjects.add(dep));
+          dependents.forEach((dep) => affectedProjects.add(dep));
         }
       }
 
@@ -458,32 +522,41 @@ export class ProjectDatabase {
 
   async getProjectsByType(projectType: string): Promise<Project[]> {
     return new Promise((resolve, reject) => {
-      this.db.all('SELECT * FROM projects WHERE project_type = ? ORDER BY name', 
-        [projectType], (err: Error | null, rows: unknown[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as Project[]);
+      this.db.all(
+        'SELECT * FROM projects WHERE project_type = ? ORDER BY name',
+        [projectType],
+        (err: Error | null, rows: unknown[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as Project[]);
+          }
         }
-      });
+      );
     });
   }
 
   async getProjectsByTag(tag: string): Promise<Project[]> {
     return new Promise((resolve, reject) => {
-      this.db.all('SELECT * FROM projects WHERE tags LIKE ? ORDER BY name', 
-        [`%${tag}%`], (err: Error | null, rows: unknown[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as Project[]);
+      this.db.all(
+        'SELECT * FROM projects WHERE tags LIKE ? ORDER BY name',
+        [`%${tag}%`],
+        (err: Error | null, rows: unknown[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as Project[]);
+          }
         }
-      });
+      );
     });
   }
 
   // Utility methods
-  async scanRepositoryFiles(rootPath: string, projectName: string): Promise<void> {
+  async scanRepositoryFiles(
+    rootPath: string,
+    projectName: string
+  ): Promise<void> {
     const project = await this.getProject(projectName);
     if (!project) {
       throw new Error(`Project "${projectName}" not found`);
@@ -491,18 +564,18 @@ export class ProjectDatabase {
 
     const scanDirectory = async (dirPath: string): Promise<void> => {
       const items = fs.readdirSync(dirPath);
-      
+
       for (const item of items) {
         const fullPath = path.join(dirPath, item);
         const relativePath = path.relative(rootPath, fullPath);
-        
+
         // Skip hidden files and directories, node_modules, etc.
         if (item.startsWith('.') || item === 'node_modules') {
           continue;
         }
 
         const stat = fs.statSync(fullPath);
-        
+
         if (stat.isDirectory()) {
           await scanDirectory(fullPath);
         } else if (stat.isFile()) {
@@ -519,7 +592,8 @@ export class ProjectDatabase {
   async clearFileDependencies(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.db.run('DELETE FROM file_dependencies', (err: Error | null) => {
-        if (err) reject(err); else resolve();
+        if (err) reject(err);
+        else resolve();
       });
     });
   }
@@ -530,7 +604,8 @@ export class ProjectDatabase {
         'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on) VALUES (?, ?)'
       );
       stmt.run([filePath, dependsOn], (err: Error | null) => {
-        if (err) reject(err); else resolve();
+        if (err) reject(err);
+        else resolve();
       });
       stmt.finalize();
     });
@@ -542,7 +617,8 @@ export class ProjectDatabase {
         'SELECT depends_on FROM file_dependencies WHERE file_path = ? ORDER BY depends_on',
         [filePath],
         (err: Error | null, rows: Array<{ depends_on: string }>) => {
-          if (err) reject(err); else resolve(rows.map(r => r.depends_on));
+          if (err) reject(err);
+          else resolve(rows.map((r) => r.depends_on));
         }
       );
     });
@@ -554,7 +630,8 @@ export class ProjectDatabase {
         'SELECT file_path FROM file_dependencies WHERE depends_on = ? ORDER BY file_path',
         [dependsOn],
         (err: Error | null, rows: Array<{ file_path: string }>) => {
-          if (err) reject(err); else resolve(rows.map(r => r.file_path));
+          if (err) reject(err);
+          else resolve(rows.map((r) => r.file_path));
         }
       );
     });
@@ -567,9 +644,15 @@ export class ProjectDatabase {
     try {
       const nxJsonPath = path.join(root, 'nx.json');
       if (fs.existsSync(nxJsonPath)) {
-        const nxConfig = JSON.parse(fs.readFileSync(nxJsonPath, 'utf8')) as Record<string, unknown>;
+        const nxConfig = JSON.parse(
+          fs.readFileSync(nxJsonPath, 'utf8')
+        ) as Record<string, unknown>;
         const installation = (nxConfig as any).installation;
-        if (installation && typeof installation === 'object' && typeof (installation as any).cacheDirectory === 'string') {
+        if (
+          installation &&
+          typeof installation === 'object' &&
+          typeof (installation as any).cacheDirectory === 'string'
+        ) {
           cacheDir = (installation as any).cacheDirectory as string;
         }
       }
@@ -577,7 +660,12 @@ export class ProjectDatabase {
       // ignore and use default
     }
 
-    const fileMapPath = path.join(root, cacheDir, 'workspace-data', 'file-map.json');
+    const fileMapPath = path.join(
+      root,
+      cacheDir,
+      'workspace-data',
+      'file-map.json'
+    );
     if (!fs.existsSync(fileMapPath)) {
       throw new Error(`Nx file map not found at ${fileMapPath}`);
     }
@@ -597,7 +685,11 @@ export class ProjectDatabase {
           if (dep.startsWith('npm:') || dep === 'dynamic') continue;
           await this.addFileDependency(filePathRel, dep);
           inserted++;
-        } else if (Array.isArray(dep) && dep.length > 0 && typeof dep[0] === 'string') {
+        } else if (
+          Array.isArray(dep) &&
+          dep.length > 0 &&
+          typeof dep[0] === 'string'
+        ) {
           const depStr = dep[0] as string;
           if (depStr.startsWith('npm:') || depStr === 'dynamic') continue;
           await this.addFileDependency(filePathRel, depStr);
@@ -607,7 +699,8 @@ export class ProjectDatabase {
     };
 
     // nonProjectFiles
-    const nonProjectFiles: Array<{ file: string; deps?: unknown }> = parsed?.fileMap?.nonProjectFiles ?? [];
+    const nonProjectFiles: Array<{ file: string; deps?: unknown }> =
+      parsed?.fileMap?.nonProjectFiles ?? [];
     for (const entry of nonProjectFiles) {
       await processEntry(entry.file, (entry as any).deps);
     }
@@ -615,7 +708,8 @@ export class ProjectDatabase {
     // projectFileMap
     const projectFileMap = parsed?.fileMap?.projectFileMap ?? {};
     for (const project of Object.keys(projectFileMap)) {
-      const files: Array<{ file: string; deps?: unknown }> = projectFileMap[project] ?? [];
+      const files: Array<{ file: string; deps?: unknown }> =
+        projectFileMap[project] ?? [];
       for (const entry of files) {
         await processEntry(entry.file, (entry as any).deps);
       }
@@ -633,7 +727,7 @@ export class ProjectDatabase {
         { encoding: 'utf8', cwd: process.cwd() }
       );
 
-      const lines = gitLogOutput.split('\n').filter(line => line.trim());
+      const lines = gitLogOutput.split('\n').filter((line) => line.trim());
       let currentCommit: Partial<GitCommit> | null = null;
       const touchedFiles: Array<{ filePath: string; changeType: string }> = [];
 
@@ -642,7 +736,10 @@ export class ProjectDatabase {
           // This is a commit line
           if (currentCommit && touchedFiles.length > 0) {
             // Save the previous commit and its files
-            await this.saveCommitWithFiles(currentCommit as GitCommit, touchedFiles);
+            await this.saveCommitWithFiles(
+              currentCommit as GitCommit,
+              touchedFiles
+            );
             touchedFiles.length = 0; // Clear the array
           }
 
@@ -651,7 +748,7 @@ export class ProjectDatabase {
             hash: hash.trim(),
             author: author.trim(),
             date: date.trim(),
-            message: message.trim()
+            message: message.trim(),
           };
         } else if (currentCommit && line.match(/^[AMDRT]\s+/)) {
           // This is a file change line (A/M/D/R/T followed by filename)
@@ -663,17 +760,24 @@ export class ProjectDatabase {
 
       // Don't forget the last commit
       if (currentCommit && touchedFiles.length > 0) {
-        await this.saveCommitWithFiles(currentCommit as GitCommit, touchedFiles);
+        await this.saveCommitWithFiles(
+          currentCommit as GitCommit,
+          touchedFiles
+        );
       }
 
       console.log(`Synced ${commitCount} git commits to database`);
     } catch (error) {
-      throw new Error(`Failed to sync git commits: ${error instanceof Error ? error.message : error}`);
+      throw new Error(
+        `Failed to sync git commits: ${
+          error instanceof Error ? error.message : error
+        }`
+      );
     }
   }
 
   private async saveCommitWithFiles(
-    commit: GitCommit, 
+    commit: GitCommit,
     touchedFiles: Array<{ filePath: string; changeType: string }>
   ): Promise<void> {
     // First, insert or get the commit
@@ -692,24 +796,31 @@ export class ProjectDatabase {
         INSERT OR IGNORE INTO git_commits (hash, author, date, message) 
         VALUES (?, ?, ?, ?)
       `);
-      stmt.run([commit.hash, commit.author, commit.date, commit.message], function(err) {
-        if (err) {
-          reject(err);
-        } else {
-          // If we inserted a new row, use the lastID, otherwise get the existing ID
-          if (this.lastID > 0) {
-            resolve(this.lastID);
+      stmt.run(
+        [commit.hash, commit.author, commit.date, commit.message],
+        function (err) {
+          if (err) {
+            reject(err);
           } else {
-            // Get the existing commit ID
-            reject(new Error('Failed to insert or retrieve commit'));
+            // If we inserted a new row, use the lastID, otherwise get the existing ID
+            if (this.lastID > 0) {
+              resolve(this.lastID);
+            } else {
+              // Get the existing commit ID
+              reject(new Error('Failed to insert or retrieve commit'));
+            }
           }
         }
-      });
+      );
       stmt.finalize();
     });
   }
 
-  private async insertTouchedFile(commitId: number, filePath: string, changeType: string): Promise<void> {
+  private async insertTouchedFile(
+    commitId: number,
+    filePath: string,
+    changeType: string
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const stmt = this.db.prepare(`
         INSERT OR REPLACE INTO touched_files (commit_id, file_path, change_type) 
@@ -729,8 +840,8 @@ export class ProjectDatabase {
   async getCommits(limit = 50): Promise<GitCommit[]> {
     return new Promise((resolve, reject) => {
       this.db.all(
-        'SELECT * FROM git_commits ORDER BY date DESC LIMIT ?', 
-        [limit], 
+        'SELECT * FROM git_commits ORDER BY date DESC LIMIT ?',
+        [limit],
         (err, rows) => {
           if (err) {
             reject(err);
@@ -777,14 +888,18 @@ export class ProjectDatabase {
         ORDER BY gc.date DESC
         LIMIT ?
       `;
-      
-      this.db.all(query, [commitCount * 10], (err, rows: { file_path: string }[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows.map(row => row.file_path));
+
+      this.db.all(
+        query,
+        [commitCount * 10],
+        (err, rows: { file_path: string }[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows.map((row) => row.file_path));
+          }
         }
-      });
+      );
     });
   }
 
@@ -813,7 +928,9 @@ export class ProjectDatabase {
 }
 
 // Export convenience functions
-export async function createDatabase(dbPath?: string): Promise<ProjectDatabase> {
+export async function createDatabase(
+  dbPath?: string
+): Promise<ProjectDatabase> {
   return new ProjectDatabase(dbPath);
 }
 
