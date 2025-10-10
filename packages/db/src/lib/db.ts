@@ -104,11 +104,22 @@ export class ProjectDatabase {
       )
     `;
 
+    const createFileDepsTable = `
+      CREATE TABLE IF NOT EXISTS file_dependencies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_path TEXT NOT NULL,
+        depends_on TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(file_path, depends_on)
+      )
+    `;
+
     this.db.serialize(() => {
       this.db.run(createProjectsTable);
       this.db.run(createFilesTable);
       this.db.run(createCommitsTable);
       this.db.run(createTouchedFilesTable);
+      this.db.run(createFileDepsTable);
     });
   }
 
@@ -502,6 +513,115 @@ export class ProjectDatabase {
     };
 
     await scanDirectory(rootPath);
+  }
+
+  // File dependency methods (Nx file-map ingestion)
+  async clearFileDependencies(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.run('DELETE FROM file_dependencies', (err: Error | null) => {
+        if (err) reject(err); else resolve();
+      });
+    });
+  }
+
+  async addFileDependency(filePath: string, dependsOn: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const stmt = this.db.prepare(
+        'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on) VALUES (?, ?)'
+      );
+      stmt.run([filePath, dependsOn], (err: Error | null) => {
+        if (err) reject(err); else resolve();
+      });
+      stmt.finalize();
+    });
+  }
+
+  async getFileDependencies(filePath: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT depends_on FROM file_dependencies WHERE file_path = ? ORDER BY depends_on',
+        [filePath],
+        (err: Error | null, rows: Array<{ depends_on: string }>) => {
+          if (err) reject(err); else resolve(rows.map(r => r.depends_on));
+        }
+      );
+    });
+  }
+
+  async getFileDependents(dependsOn: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT file_path FROM file_dependencies WHERE depends_on = ? ORDER BY file_path',
+        [dependsOn],
+        (err: Error | null, rows: Array<{ file_path: string }>) => {
+          if (err) reject(err); else resolve(rows.map(r => r.file_path));
+        }
+      );
+    });
+  }
+
+  async syncFileDependenciesFromNx(workspaceRoot?: string): Promise<number> {
+    const root = workspaceRoot ? path.resolve(workspaceRoot) : process.cwd();
+    // Determine Nx cache dir from nx.json if present, default to .nx
+    let cacheDir = '.nx';
+    try {
+      const nxJsonPath = path.join(root, 'nx.json');
+      if (fs.existsSync(nxJsonPath)) {
+        const nxConfig = JSON.parse(fs.readFileSync(nxJsonPath, 'utf8')) as Record<string, unknown>;
+        const installation = (nxConfig as any).installation;
+        if (installation && typeof installation === 'object' && typeof (installation as any).cacheDirectory === 'string') {
+          cacheDir = (installation as any).cacheDirectory as string;
+        }
+      }
+    } catch {
+      // ignore and use default
+    }
+
+    const fileMapPath = path.join(root, cacheDir, 'workspace-data', 'file-map.json');
+    if (!fs.existsSync(fileMapPath)) {
+      throw new Error(`Nx file map not found at ${fileMapPath}`);
+    }
+
+    const content = fs.readFileSync(fileMapPath, 'utf8');
+    const parsed = JSON.parse(content) as any;
+
+    let inserted = 0;
+    await this.clearFileDependencies();
+
+    // Helper to process one record
+    const processEntry = async (filePathRel: string, deps: unknown) => {
+      if (!deps || !Array.isArray(deps)) return;
+      for (const dep of deps) {
+        // Accept only workspace file paths (exclude npm: or tuples with non-file info)
+        if (typeof dep === 'string') {
+          if (dep.startsWith('npm:') || dep === 'dynamic') continue;
+          await this.addFileDependency(filePathRel, dep);
+          inserted++;
+        } else if (Array.isArray(dep) && dep.length > 0 && typeof dep[0] === 'string') {
+          const depStr = dep[0] as string;
+          if (depStr.startsWith('npm:') || depStr === 'dynamic') continue;
+          await this.addFileDependency(filePathRel, depStr);
+          inserted++;
+        }
+      }
+    };
+
+    // nonProjectFiles
+    const nonProjectFiles: Array<{ file: string; deps?: unknown }> = parsed?.fileMap?.nonProjectFiles ?? [];
+    for (const entry of nonProjectFiles) {
+      await processEntry(entry.file, (entry as any).deps);
+    }
+
+    // projectFileMap
+    const projectFileMap = parsed?.fileMap?.projectFileMap ?? {};
+    for (const project of Object.keys(projectFileMap)) {
+      const files: Array<{ file: string; deps?: unknown }> = projectFileMap[project] ?? [];
+      for (const entry of files) {
+        await processEntry(entry.file, (entry as any).deps);
+      }
+    }
+
+    return inserted;
   }
 
   // Git commit tracking methods

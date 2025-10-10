@@ -34,6 +34,11 @@ Commands:
   touched-files [commit-hash]            List files touched in commits (optionally for specific commit)
   git-affected [commit-count]            Show projects affected by recent git changes (default: 100)
 
+  File Dependency Commands:
+  sync-file-deps [workspace-root]        Sync file dependencies from Nx file-map.json
+  file-deps <file>                       List files that the given file depends on
+  file-dependents <file>                 List files that depend on the given file
+
 Examples:
   nx-tools-db sync-nx                    # Sync all Nx projects
   nx-tools-db create-project "my-app" "My application"
@@ -176,6 +181,46 @@ Examples:
         console.log(`Scanning "${scanPath}" for project "${projectName}"...`);
         await db.scanRepositoryFiles(scanPath, projectName);
         console.log('Scan completed');
+        break;
+      }
+
+      case 'sync-file-deps': {
+        const [workspaceRoot] = args.slice(1);
+        console.log('Syncing file dependencies from Nx file map...');
+        const count = await db.syncFileDependenciesFromNx(workspaceRoot);
+        console.log(`Synced ${count} file dependency relations`);
+        break;
+      }
+
+      case 'file-deps': {
+        const [filePath] = args.slice(1);
+        if (!filePath) {
+          console.error('File path is required');
+          process.exit(1);
+        }
+        const deps = await db.getFileDependencies(filePath);
+        if (deps.length === 0) {
+          console.log(`No dependencies recorded for "${filePath}"`);
+        } else {
+          console.log(`Dependencies of "${filePath}":`);
+          deps.forEach(d => console.log(`  ${d}`));
+        }
+        break;
+      }
+
+      case 'file-dependents': {
+        const [filePath] = args.slice(1);
+        if (!filePath) {
+          console.error('File path is required');
+          process.exit(1);
+        }
+        const dependents = await db.getFileDependents(filePath);
+        if (dependents.length === 0) {
+          console.log(`No dependents recorded for "${filePath}"`);
+        } else {
+          console.log(`Files depending on "${filePath}":`);
+          dependents.forEach(f => console.log(`  ${f}`));
+        }
         break;
       }
 

@@ -16,7 +16,7 @@ describe('ProjectDatabase', () => {
     // Ensure any prior leftovers are removed
     try {
       if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
-    } catch (e) {
+    } catch {
       // ignore
     }
     pdb = new ProjectDatabase(dbFile);
@@ -26,7 +26,7 @@ describe('ProjectDatabase', () => {
     pdb.close();
     try {
       if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
-    } catch (e) {
+    } catch {
       // ignore
     }
     // Restore original working directory
@@ -143,6 +143,22 @@ describe('ProjectDatabase', () => {
     } catch (error) {
       // Git operations might fail in test environment, that's expected
       console.log('Git operations failed (expected in test environment):', error);
+    }
+  });
+
+  it('can sync and query file dependencies from Nx file map', async () => {
+    // Sync file dependencies from Nx file-map.json in the repo
+    try {
+      const count = await pdb.syncFileDependenciesFromNx();
+      expect(typeof count).toBe('number');
+      // Basic query behavior should work, even if there are no relations
+      const deps = await pdb.getFileDependencies('package.json');
+      expect(Array.isArray(deps)).toBe(true);
+      const dependents = await pdb.getFileDependents('package.json');
+      expect(Array.isArray(dependents)).toBe(true);
+    } catch (e) {
+      // If the Nx cache file-map is missing, ensure a helpful error is thrown
+      expect((e as Error).message).toMatch(/file map not found/i);
     }
   });
 

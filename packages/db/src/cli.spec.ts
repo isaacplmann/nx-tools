@@ -257,6 +257,20 @@ describe('db CLI', () => {
     );
   }, 30000);
 
+  it('syncs and queries file dependencies via CLI', async () => {
+    // Sync file dependencies
+    const sync = await execFileAsync(node, [cliPath, 'sync-file-deps'], { cwd: repoRoot });
+    expect(sync.stdout).toMatch(/Syncing file dependencies from Nx file map/);
+
+    // Query deps for a common file (may be empty depending on workspace)
+    const depsOut = await execFileAsync(node, [cliPath, 'file-deps', 'package.json'], { cwd: repoRoot });
+    expect(depsOut.stdout).toMatch(/Dependencies of|No dependencies recorded/);
+
+    // Query dependents for a common file
+    const dependentsOut = await execFileAsync(node, [cliPath, 'file-dependents', 'package.json'], { cwd: repoRoot });
+    expect(dependentsOut.stdout).toMatch(/Files depending on|No dependents recorded/);
+  }, 30000);
+
   it('validates git command parameters', async () => {
     // Test invalid commit count for sync-git
     try {
