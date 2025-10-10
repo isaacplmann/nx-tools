@@ -4,11 +4,15 @@ import * as fs from 'fs';
 import { ProjectDatabase } from './db.js';
 
 describe('ProjectDatabase', () => {
-  const tmpDir = os.tmpdir();
-  const dbFile = path.join(tmpDir, `nx-tools-test-${Date.now()}.db`);
+  // Use the sibling ws-nx-summer2025 repository as the workspace root
+  const repoRoot = path.resolve(__dirname, '../../../../../ws-nx-summer2025');
+  const originalCwd = process.cwd();
+  const dbFile = path.join(os.tmpdir(), `nx-tools-test-${Date.now()}.db`);
   let pdb: ProjectDatabase;
 
   beforeAll(() => {
+    // Ensure tests run inside the Nx + git repo
+    process.chdir(repoRoot);
     // Ensure any prior leftovers are removed
     try {
       if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
@@ -25,6 +29,8 @@ describe('ProjectDatabase', () => {
     } catch (e) {
       // ignore
     }
+    // Restore original working directory
+    process.chdir(originalCwd);
   });
 
   it('can create, read, update and delete projects', async () => {
