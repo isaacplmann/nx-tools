@@ -166,6 +166,20 @@ Run `nx build db` to build the library.
 
 Run `nx test db` to execute the unit tests via [Jest](https://jestjs.io).
 
+
+## Outline
+
+- inputs
+  - file-map.json
+    - source file
+    - source project
+    - target project
+    - need: target file or target symbol(s)
+  - git commit history
+    - commit sha
+    - file list
+  - 
+
 ## License
 
 MIT
