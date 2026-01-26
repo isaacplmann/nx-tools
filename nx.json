@@ -16,6 +16,7 @@
   },
   "nxCloudId": "68e5116cb38be000e0bd89c7",
   "plugins": [
+    "@nx-tools/analyzer",
     {
       "plugin": "@nx/js/typescript",
       "options": {
@@ -46,12 +47,21 @@
   "targetDefaults": {
     "test": {
       "dependsOn": ["^build"]
+    },
+    "@nx/js:tsc": {
+      "cache": true,
+      "dependsOn": ["^build"],
+      "inputs": ["production", "^production"]
+    },
+    "e2e": {
+      "dependsOn": ["^build"]
     }
   },
   "release": {
     "projects": ["packages/*"],
     "projectsRelationship": "fixed",
     "version": {
+      "preVersionCommand": "npx nx run-many -t build",
       "specifierSource": "conventional-commits",
       "currentVersionResolver": "git-tag",
       "preserveLocalDependencyProtocols": false

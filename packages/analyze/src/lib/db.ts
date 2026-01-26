@@ -6,8 +6,9 @@ const sqlite3: Sqlite3Module = createRequire(import.meta.url)('sqlite3');
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
-import { createProjectGraphAsync } from '@nx/devkit';
-import type { ProjectGraph, ProjectGraphProjectNode } from '@nx/devkit';
+import { createProjectGraphAsync, createProjectFileMapUsingProjectGraph } from '@nx/devkit';
+import type { FileData, ProjectGraph, ProjectGraphProjectNode } from '@nx/devkit';
+import { createFileMapUsingProjectGraph } from 'nx/src/project-graph/file-map-utils.js';
 
 export interface Project {
   id?: number;
@@ -132,17 +133,18 @@ export class ProjectDatabase {
       const projectGraph = await createProjectGraphAsync({
         exitOnError: false,
       });
+      const fileMap = await createProjectFileMapUsingProjectGraph(projectGraph);
 
       // Sync all Nx projects to database
-      for (const [projectName, projectNode] of Object.entries(
-        projectGraph.nodes
+      for (const [projectName, files] of Object.entries(
+        fileMap
       )) {
-        await this.syncNxProject(projectName, projectNode);
+        await this.syncNxProject(projectName, projectGraph.nodes[projectName], files);
       }
 
       console.log(
         `Synced ${
-          Object.keys(projectGraph.nodes).length
+          Object.keys(fileMap).length
         } Nx projects to database`
       );
       return projectGraph;
@@ -157,9 +159,10 @@ export class ProjectDatabase {
 
   private async syncNxProject(
     projectName: string,
-    projectNode: ProjectGraphProjectNode
+    projectNode: ProjectGraphProjectNode,
+    files: FileData[]
   ): Promise<void> {
-    const { data } = projectNode;
+    const data = projectNode.data;
 
     // Create or update project in database
     const existingProject = await this.getProject(projectName);
@@ -185,57 +188,56 @@ export class ProjectDatabase {
     }
 
     // Add all files from the project
-    if (data.root) {
-      await this.scanNxProjectFiles(projectName, data.root);
+    for (const file of files) {
+      await this.addFileToProject(projectName, file.file, file.deps);
     }
   }
 
-  private async scanNxProjectFiles(
-    projectName: string,
-    projectRoot: string
-  ): Promise<void> {
-    const fullProjectRoot = path.resolve(projectRoot);
+  // private async scanNxProjectFiles(
+  //   projectName: string,
+  //   projectRoot: string
+  // ): Promise<void> {
+  //   const fullProjectRoot = path.resolve(projectRoot);
 
-    if (!fs.existsSync(fullProjectRoot)) {
-      console.warn(`Project root does not exist: ${fullProjectRoot}`);
-      return;
-    }
+  //   if (!fs.existsSync(fullProjectRoot)) {
+  //     console.warn(`Project root does not exist: ${fullProjectRoot}`);
+  //     return;
+  //   }
 
-    const scanDirectory = async (dirPath: string): Promise<void> => {
-      try {
-        const items = fs.readdirSync(dirPath);
+  //   const scanDirectory = async (dirPath: string): Promise<void> => {
+  //     try {
+  //       const items = fs.readdirSync(dirPath);
 
-        for (const item of items) {
-          const fullPath = path.join(dirPath, item);
-          const relativePath = path.relative(process.cwd(), fullPath);
+  //       for (const item of items) {
+  //         const fullPath = path.join(dirPath, item);
+  //         const relativePath = path.relative(process.cwd(), fullPath);
 
-          // Skip hidden files, node_modules, and build outputs
-          if (
-            item.startsWith('.') ||
-            item === 'node_modules' ||
-            item === 'dist' ||
-            item === 'build' ||
-            item === 'coverage'
-          ) {
-            continue;
-          }
+  //         // Skip hidden files, node_modules, and build outputs
+  //         if (
+  //           item.startsWith('.') ||
+  //           item === 'node_modules' ||
+  //           item === 'dist' ||
+  //           item === 'build' ||
+  //           item === 'coverage'
+  //         ) {
+  //           continue;
+  //         }
 
-          const stat = fs.statSync(fullPath);
+  //         const stat = fs.statSync(fullPath);
 
-          if (stat.isDirectory()) {
-            await scanDirectory(fullPath);
-          } else if (stat.isFile()) {
-            const fileType = path.extname(item).slice(1) || 'unknown';
-            await this.addFileToProject(projectName, relativePath, fileType);
-          }
-        }
-      } catch (error) {
-        console.warn(`Error scanning directory ${dirPath}:`, error);
-      }
-    };
+  //         if (stat.isDirectory()) {
+  //           await scanDirectory(fullPath);
+  //         } else if (stat.isFile()) {
+  //           const fileType = path.extname(item).slice(1) || 'unknown';
+  //         }
+  //       }
+  //     } catch (error) {
+  //       console.warn(`Error scanning directory ${dirPath}:`, error);
+  //     }
+  //   };
 
-    await scanDirectory(fullProjectRoot);
-  }
+  //   await scanDirectory(fullProjectRoot);
+  // }
 
   // Project methods
   async createProject(name: string, description?: string): Promise<number> {
@@ -378,7 +380,7 @@ export class ProjectDatabase {
   async addFileToProject(
     projectName: string,
     filePath: string,
-    fileType?: string
+    fileDeps?: string[]
   ): Promise<void> {
     const project = await this.getProject(projectName);
     if (!project) {
@@ -389,7 +391,7 @@ export class ProjectDatabase {
       const stmt = this.db.prepare(
         'INSERT OR REPLACE INTO project_files (project_id, file_path, file_type) VALUES (?, ?, ?)'
       );
-      stmt.run([project.id, filePath, fileType], (err: Error | null) => {
+      stmt.run([project.id, filePath, fileDeps], (err: Error | null) => {
         if (err) {
           reject(err);
         } else {

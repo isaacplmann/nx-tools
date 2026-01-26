@@ -95,22 +95,12 @@ nx-tools-db delete-project "old-project"
 
 #### Project Methods
 
-- `createProject(name: string, description?: string): Promise<number>` - Create a new project
 - `getProject(name: string): Promise<Project | null>` - Get a project by name
 - `getAllProjects(): Promise<Project[]>` - Get all projects
-- `deleteProject(name: string): Promise<boolean>` - Delete a project
 
 #### File Methods
 
-- `addFileToProject(projectName: string, filePath: string, fileType?: string): Promise<void>` - Add a file to a project
-- `removeFileFromProject(projectName: string, filePath: string): Promise<boolean>` - Remove a file from a project
 - `getProjectFiles(projectName: string): Promise<ProjectFile[]>` - Get all files in a project
-- `getFileProjects(filePath: string): Promise<Project[]>` - Get all projects containing a file
-
-#### Utility Methods
-
-- `scanRepositoryFiles(rootPath: string, projectName: string): Promise<void>` - Scan a directory and add files to a project
-- `close(): void` - Close the database connection
 
 ### Types
 
@@ -126,8 +116,6 @@ interface ProjectFile {
   id?: number;
   project_id: number;
   file_path: string;
-  file_type?: string;
-  added_at?: string;
 }
 ```
 
