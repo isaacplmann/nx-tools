@@ -14,19 +14,11 @@ Usage: nx-tools-db <command> [options]
 
 Commands:
   sync-nx [workspace-root]               Sync all Nx projects to database
-  create-project <name> [description]    Create a new project
   list-projects                          List all projects
-  delete-project <name>                  Delete a project
-  add-file <project> <filepath> [type]   Add file to project
-  remove-file <project> <filepath>       Remove file from project
   list-files <project>                   List files in project
   find-projects <filepath>               Find projects containing file
-  scan <project> [rootPath]              Scan directory and add all files to project
   dependencies <project>                 Show project dependencies
   dependents <project>                   Show projects that depend on this project
-  affected <file1> [file2...]            Show projects affected by changed files
-  by-type <type>                         List projects by type (application, library, etc.)
-  by-tag <tag>                           List projects by tag
   
   Git Commands:
   sync-git [commit-count]                Sync git commits and touched files (default: 100 commits)
@@ -117,34 +109,6 @@ Examples:
         break;
       }
 
-      case 'add-file': {
-        const [projectName, filePath, fileType] = args.slice(1);
-        if (!projectName || !filePath) {
-          console.error('Project name and file path are required');
-          process.exit(1);
-        }
-        await db.addFileToProject(projectName, filePath, fileType);
-        console.log(`Added "${filePath}" to project "${projectName}"`);
-        break;
-      }
-
-      case 'remove-file': {
-        const [projectName, filePath] = args.slice(1);
-        if (!projectName || !filePath) {
-          console.error('Project name and file path are required');
-          process.exit(1);
-        }
-        const removed = await db.removeFileFromProject(projectName, filePath);
-        if (removed) {
-          console.log(`Removed "${filePath}" from project "${projectName}"`);
-        } else {
-          console.log(
-            `File "${filePath}" not found in project "${projectName}"`
-          );
-        }
-        break;
-      }
-
       case 'list-files': {
         const [projectName] = args.slice(1);
         if (!projectName) {
@@ -182,19 +146,6 @@ Examples:
             console.log(`  ${project.name}`);
           });
         }
-        break;
-      }
-
-      case 'scan': {
-        const [projectName, rootPath] = args.slice(1);
-        if (!projectName) {
-          console.error('Project name is required');
-          process.exit(1);
-        }
-        const scanPath = rootPath || process.cwd();
-        console.log(`Scanning "${scanPath}" for project "${projectName}"...`);
-        await db.scanRepositoryFiles(scanPath, projectName);
-        console.log('Scan completed');
         break;
       }
 

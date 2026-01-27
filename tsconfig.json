@@ -10,7 +10,34 @@
       "path": "./packages/analyzer"
     },
     {
-      "path": "./packages/analyzer-e2e-e2e"
+      "path": "./example/libs/movies/feature-movie-detail-page"
+    },
+    {
+      "path": "./example/libs/movies/feature-favorites-page"
+    },
+    {
+      "path": "./example/libs/shared/feature-error-page"
+    },
+    {
+      "path": "./example/libs/movies/feature-navbar"
+    },
+    {
+      "path": "./example/libs/movies/data-access"
+    },
+    {
+      "path": "./example/libs/shared/core-utils"
+    },
+    {
+      "path": "./example/apps/movies-e2e"
+    },
+    {
+      "path": "./example/libs/movies/ui"
+    },
+    {
+      "path": "./example/libs/shared/ui"
+    },
+    {
+      "path": "./example/apps/movies"
     }
   ]
 }

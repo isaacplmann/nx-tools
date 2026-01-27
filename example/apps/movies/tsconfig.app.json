@@ -19,5 +19,34 @@
     "src/**/*.spec.jsx",
     "src/**/*.test.jsx"
   ],
-  "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"],
+  "references": [
+    {
+      "path": "../../libs/shared/models"
+    },
+    {
+      "path": "../../libs/shared/auth/feature-guarded-route"
+    },
+    {
+      "path": "../../libs/movies/feature-movie-detail-page/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/movies/feature-favorites-page/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/shared/feature-error-page/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/movies/feature-navbar/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/movies/data-access/tsconfig.lib.json"
+    },
+    {
+      "path": "../../libs/shared/auth/data-access"
+    },
+    {
+      "path": "../../libs/movies/ui/tsconfig.lib.json"
+    }
+  ]
 }

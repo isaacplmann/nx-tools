@@ -6,9 +6,17 @@ const sqlite3: Sqlite3Module = createRequire(import.meta.url)('sqlite3');
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
-import { createProjectGraphAsync, createProjectFileMapUsingProjectGraph } from '@nx/devkit';
-import type { FileData, ProjectGraph, ProjectGraphProjectNode } from '@nx/devkit';
-import { createFileMapUsingProjectGraph } from 'nx/src/project-graph/file-map-utils.js';
+import {
+  createProjectGraphAsync,
+  createProjectFileMapUsingProjectGraph,
+  workspaceRoot,
+} from '@nx/devkit';
+import type {
+  FileData,
+  ProjectGraph,
+  ProjectGraphProjectNode,
+} from '@nx/devkit';
+import ts from 'typescript';
 
 export interface Project {
   id?: number;
@@ -44,6 +52,12 @@ export interface TouchedFile {
   file_path: string;
   change_type: string; // A (added), M (modified), D (deleted), R (renamed)
   created_at?: string;
+}
+
+export interface SymbolDefinition {
+  symbol: string;
+  defined_in_project: string;
+  defined_in_file?: string;
 }
 
 export class ProjectDatabase {
@@ -109,9 +123,10 @@ export class ProjectDatabase {
       CREATE TABLE IF NOT EXISTS file_dependencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         file_path TEXT NOT NULL,
-        depends_on TEXT NOT NULL,
+        depends_on_project TEXT NOT NULL,
+        depends_on_file TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(file_path, depends_on)
+        UNIQUE(file_path, depends_on_project, depends_on_file)
       )
     `;
 
@@ -136,16 +151,16 @@ export class ProjectDatabase {
       const fileMap = await createProjectFileMapUsingProjectGraph(projectGraph);
 
       // Sync all Nx projects to database
-      for (const [projectName, files] of Object.entries(
-        fileMap
-      )) {
-        await this.syncNxProject(projectName, projectGraph.nodes[projectName], files);
+      for (const [projectName, files] of Object.entries(fileMap)) {
+        await this.syncNxProject(
+          projectName,
+          projectGraph.nodes[projectName],
+          files
+        );
       }
 
       console.log(
-        `Synced ${
-          Object.keys(fileMap).length
-        } Nx projects to database`
+        `Synced ${Object.keys(fileMap).length} Nx projects to database`
       );
       return projectGraph;
     } catch (error) {
@@ -189,7 +204,11 @@ export class ProjectDatabase {
 
     // Add all files from the project
     for (const file of files) {
-      await this.addFileToProject(projectName, file.file, file.deps);
+      await this.addFileToProject(
+        projectName,
+        file.file,
+        file.deps?.map((d) => d[0])
+      );
     }
   }
 
@@ -554,41 +573,41 @@ export class ProjectDatabase {
     });
   }
 
-  // Utility methods
-  async scanRepositoryFiles(
-    rootPath: string,
-    projectName: string
-  ): Promise<void> {
-    const project = await this.getProject(projectName);
-    if (!project) {
-      throw new Error(`Project "${projectName}" not found`);
-    }
+  // // Utility methods
+  // async scanRepositoryFiles(
+  //   rootPath: string,
+  //   projectName: string
+  // ): Promise<void> {
+  //   const project = await this.getProject(projectName);
+  //   if (!project) {
+  //     throw new Error(`Project "${projectName}" not found`);
+  //   }
 
-    const scanDirectory = async (dirPath: string): Promise<void> => {
-      const items = fs.readdirSync(dirPath);
+  //   const scanDirectory = async (dirPath: string): Promise<void> => {
+  //     const items = fs.readdirSync(dirPath);
 
-      for (const item of items) {
-        const fullPath = path.join(dirPath, item);
-        const relativePath = path.relative(rootPath, fullPath);
+  //     for (const item of items) {
+  //       const fullPath = path.join(dirPath, item);
+  //       const relativePath = path.relative(rootPath, fullPath);
 
-        // Skip hidden files and directories, node_modules, etc.
-        if (item.startsWith('.') || item === 'node_modules') {
-          continue;
-        }
+  //       // Skip hidden files and directories, node_modules, etc.
+  //       if (item.startsWith('.') || item === 'node_modules') {
+  //         continue;
+  //       }
 
-        const stat = fs.statSync(fullPath);
+  //       const stat = fs.statSync(fullPath);
 
-        if (stat.isDirectory()) {
-          await scanDirectory(fullPath);
-        } else if (stat.isFile()) {
-          const fileType = path.extname(item).slice(1) || 'unknown';
-          await this.addFileToProject(projectName, relativePath, fileType);
-        }
-      }
-    };
+  //       if (stat.isDirectory()) {
+  //         await scanDirectory(fullPath);
+  //       } else if (stat.isFile()) {
+  //         const fileType = path.extname(item).slice(1) || 'unknown';
+  //         await this.addFileToProject(projectName, relativePath, fileType);
+  //       }
+  //     }
+  //   };
 
-    await scanDirectory(rootPath);
-  }
+  //   await scanDirectory(rootPath);
+  // }
 
   // File dependency methods (Nx file-map ingestion)
   async clearFileDependencies(): Promise<void> {
@@ -600,17 +619,94 @@ export class ProjectDatabase {
     });
   }
 
-  async addFileDependency(filePath: string, dependsOn: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const stmt = this.db.prepare(
-        'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on) VALUES (?, ?)'
-      );
-      stmt.run([filePath, dependsOn], (err: Error | null) => {
-        if (err) reject(err);
-        else resolve();
-      });
-      stmt.finalize();
-    });
+  findDefinition(fileName: string, targetPackage: string): SymbolDefinition[] {
+    const configFilePath =
+      ts.findConfigFile(fileName, ts.sys.fileExists) ||
+      path.join(workspaceRoot, 'tsconfig.json');
+    const configHost: ts.ParseConfigFileHost = {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: () => {},
+    };
+    const parsed = ts.getParsedCommandLineOfConfigFile(
+      configFilePath,
+      undefined,
+      configHost
+    );
+    const program = ts.createProgram([fileName], parsed?.options || {});
+    const sourceFile = program.getSourceFile(fileName);
+    const checker = program.getTypeChecker();
+    const foundSymbols: SymbolDefinition[] = [];
+
+    function visit(node: ts.Node) {
+      if (ts.isImportDeclaration(node)) {
+        // Get the module name (stripping quotes)
+        const moduleName = node.moduleSpecifier
+          .getText(sourceFile)
+          .replace(/['"]/g, '');
+
+        if (moduleName.includes(targetPackage)) {
+          const importClause = node.importClause;
+
+          if (
+            importClause?.namedBindings &&
+            ts.isNamedImports(importClause.namedBindings)
+          ) {
+            // Handle Named Imports: import { useState, useEffect } from 'react'
+            importClause.namedBindings.elements.forEach((namedImport) => {
+              const symbol = checker.getSymbolAtLocation(namedImport.name);
+              let defined_in_file: string | undefined = undefined;
+              if (symbol) {
+                // Follow the import chain to the original definition
+                const aliasedSymbol = checker.getAliasedSymbol(symbol);
+                const declaration =
+                  aliasedSymbol?.declarations?.[0] || symbol.declarations?.[0];
+
+                if (declaration) {
+                  defined_in_file = declaration.getSourceFile().fileName.replace(workspaceRoot + '/', '');
+                }
+              }
+              foundSymbols.push({
+                symbol: namedImport.name.text,
+                defined_in_project: targetPackage,
+                defined_in_file,
+              });
+              console.log(
+                `Import: ${namedImport.name.text} in ${fileName} defined in: ${defined_in_file}`
+              );
+            });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile!);
+    return foundSymbols;
+  }
+
+  async addFileDependency(
+    filePath: string,
+    dependsOn: string
+  ): Promise<void[]> {
+    const foundSymbols = this.findDefinition(filePath, dependsOn);
+    return Promise.all(
+      foundSymbols.map(
+        (foundSymbol) =>
+          new Promise<void>((resolve, reject) => {
+            const stmt = this.db.prepare(
+              'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on_project, depends_on_file) VALUES (?, ?, ?)'
+            );
+            stmt.run(
+              [filePath, dependsOn, foundSymbol.defined_in_file],
+              (err: Error | null) => {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+            stmt.finalize();
+          })
+      )
+    );
   }
 
   async getFileDependencies(filePath: string): Promise<string[]> {
