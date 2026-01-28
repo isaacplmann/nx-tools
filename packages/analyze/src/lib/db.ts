@@ -212,52 +212,6 @@ export class ProjectDatabase {
     }
   }
 
-  // private async scanNxProjectFiles(
-  //   projectName: string,
-  //   projectRoot: string
-  // ): Promise<void> {
-  //   const fullProjectRoot = path.resolve(projectRoot);
-
-  //   if (!fs.existsSync(fullProjectRoot)) {
-  //     console.warn(`Project root does not exist: ${fullProjectRoot}`);
-  //     return;
-  //   }
-
-  //   const scanDirectory = async (dirPath: string): Promise<void> => {
-  //     try {
-  //       const items = fs.readdirSync(dirPath);
-
-  //       for (const item of items) {
-  //         const fullPath = path.join(dirPath, item);
-  //         const relativePath = path.relative(process.cwd(), fullPath);
-
-  //         // Skip hidden files, node_modules, and build outputs
-  //         if (
-  //           item.startsWith('.') ||
-  //           item === 'node_modules' ||
-  //           item === 'dist' ||
-  //           item === 'build' ||
-  //           item === 'coverage'
-  //         ) {
-  //           continue;
-  //         }
-
-  //         const stat = fs.statSync(fullPath);
-
-  //         if (stat.isDirectory()) {
-  //           await scanDirectory(fullPath);
-  //         } else if (stat.isFile()) {
-  //           const fileType = path.extname(item).slice(1) || 'unknown';
-  //         }
-  //       }
-  //     } catch (error) {
-  //       console.warn(`Error scanning directory ${dirPath}:`, error);
-  //     }
-  //   };
-
-  //   await scanDirectory(fullProjectRoot);
-  // }
-
   // Project methods
   async createProject(name: string, description?: string): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -540,74 +494,6 @@ export class ProjectDatabase {
       return [];
     }
   }
-
-  async getProjectsByType(projectType: string): Promise<Project[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM projects WHERE project_type = ? ORDER BY name',
-        [projectType],
-        (err: Error | null, rows: unknown[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as Project[]);
-          }
-        }
-      );
-    });
-  }
-
-  async getProjectsByTag(tag: string): Promise<Project[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM projects WHERE tags LIKE ? ORDER BY name',
-        [`%${tag}%`],
-        (err: Error | null, rows: unknown[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as Project[]);
-          }
-        }
-      );
-    });
-  }
-
-  // // Utility methods
-  // async scanRepositoryFiles(
-  //   rootPath: string,
-  //   projectName: string
-  // ): Promise<void> {
-  //   const project = await this.getProject(projectName);
-  //   if (!project) {
-  //     throw new Error(`Project "${projectName}" not found`);
-  //   }
-
-  //   const scanDirectory = async (dirPath: string): Promise<void> => {
-  //     const items = fs.readdirSync(dirPath);
-
-  //     for (const item of items) {
-  //       const fullPath = path.join(dirPath, item);
-  //       const relativePath = path.relative(rootPath, fullPath);
-
-  //       // Skip hidden files and directories, node_modules, etc.
-  //       if (item.startsWith('.') || item === 'node_modules') {
-  //         continue;
-  //       }
-
-  //       const stat = fs.statSync(fullPath);
-
-  //       if (stat.isDirectory()) {
-  //         await scanDirectory(fullPath);
-  //       } else if (stat.isFile()) {
-  //         const fileType = path.extname(item).slice(1) || 'unknown';
-  //         await this.addFileToProject(projectName, relativePath, fileType);
-  //       }
-  //     }
-  //   };
-
-  //   await scanDirectory(rootPath);
-  // }
 
   // File dependency methods (Nx file-map ingestion)
   async clearFileDependencies(): Promise<void> {

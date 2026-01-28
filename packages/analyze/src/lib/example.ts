@@ -27,24 +27,6 @@ async function example() {
       );
     });
 
-    // Example: Get projects by type
-    console.log('\nApplication projects:');
-    const apps = await db.getProjectsByType('application');
-    apps.forEach((project: Project) => {
-      console.log(`- ${project.name}: ${project.root}`);
-    });
-
-    // Example: Get projects by tag (if you have projects with tags)
-    console.log('\nProjects with "type:feature" tag:');
-    const featureProjects = await db.getProjectsByTag('type:feature');
-    if (featureProjects.length > 0) {
-      featureProjects.forEach((project: Project) => {
-        console.log(`- ${project.name}`);
-      });
-    } else {
-      console.log('No projects found with that tag');
-    }
-
     // Example: Show dependencies for a project (if it exists)
     if (projects.length > 0) {
       const firstProject = projects[0];

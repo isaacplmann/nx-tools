@@ -19,7 +19,7 @@ Commands:
   find-projects <filepath>               Find projects containing file
   dependencies <project>                 Show project dependencies
   dependents <project>                   Show projects that depend on this project
-  
+
   Git Commands:
   sync-git [commit-count]                Sync git commits and touched files (default: 100 commits)
   list-commits [limit]                   List recent git commits from database (default: 50)
@@ -39,8 +39,6 @@ Examples:
   nx-tools-db dependencies "my-app"      # Show what my-app depends on
   nx-tools-db dependents "shared-lib"    # Show what depends on shared-lib
   nx-tools-db affected "src/lib/utils.ts" "package.json"
-  nx-tools-db by-type "application"
-  nx-tools-db by-tag "scope:frontend"
   nx-tools-db sync-git 50                # Sync last 50 git commits
   nx-tools-db list-commits 20            # Show last 20 commits
   nx-tools-db touched-files abc123       # Show files touched in commit abc123
@@ -245,50 +243,6 @@ Examples:
         break;
       }
 
-      case 'by-type': {
-        const [projectType] = args.slice(1);
-        if (!projectType) {
-          console.error('Project type is required');
-          process.exit(1);
-        }
-        const projects = await db.getProjectsByType(projectType);
-        if (projects.length === 0) {
-          console.log(`No projects found with type "${projectType}"`);
-        } else {
-          console.log(`Projects with type "${projectType}":`);
-          projects.forEach((project) => {
-            console.log(
-              `  ${project.name}${
-                project.description ? ` - ${project.description}` : ''
-              }`
-            );
-          });
-        }
-        break;
-      }
-
-      case 'by-tag': {
-        const [tag] = args.slice(1);
-        if (!tag) {
-          console.error('Tag is required');
-          process.exit(1);
-        }
-        const projects = await db.getProjectsByTag(tag);
-        if (projects.length === 0) {
-          console.log(`No projects found with tag "${tag}"`);
-        } else {
-          console.log(`Projects with tag "${tag}":`);
-          projects.forEach((project) => {
-            console.log(
-              `  ${project.name}${
-                project.description ? ` - ${project.description}` : ''
-              } [${project.tags}]`
-            );
-          });
-        }
-        break;
-      }
-
       case 'sync-git': {
         const [commitCountStr] = args.slice(1);
         const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
@@ -379,10 +333,15 @@ Examples:
     }
   } catch (error) {
     console.error('Error:', error instanceof Error ? error.message : error);
+    db.close();
     process.exit(1);
   } finally {
     db.close();
+    process.exit(0);
   }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error('Fatal error:', error);
+  process.exit(1);
+});
