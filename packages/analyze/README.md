@@ -5,12 +5,8 @@ A SQLite-based database for tracking which files belong to each project in your 
 ## Features
 
 - **Nx Integration**: Automatically sync with Nx workspace and project graph
-- **Project Management**: Create, list, and delete projects with Nx metadata
-- **File Tracking**: Associate files with projects using Nx project boundaries
 - **Dependency Analysis**: Track project dependencies and dependents from Nx graph
 - **Affected Project Detection**: Find projects affected by file changes
-- **Query Capabilities**: Filter projects by type, tags, and relationships
-- **Repository Scanning**: Automatically scan directories to add files to projects
 - **CLI Interface**: Command-line tools for easy management
 
 ## Installation
