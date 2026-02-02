@@ -267,16 +267,22 @@ describe('ProjectDatabase', () => {
       expect(dependents).toContain('src/shared.ts');
     });
 
-    it('can sync file dependencies from Nx', async () => {
+    it('can sync file dependencies from Nx (performance test)', async () => {
       try {
+        const start = Date.now();
         const count = await pdb.syncFileDependenciesFromNx();
+        const durationMs = Date.now() - start;
+        // Basic validation
         expect(typeof count).toBe('number');
         expect(count).toBeGreaterThanOrEqual(0);
+        // Expect the optimized sync to be reasonably fast on CI/dev machines
+        // (allows some slack; if flaky we can relax this later)
+        expect(durationMs).toBeLessThan(8000);
       } catch (e) {
         // If the Nx cache file-map is missing, ensure a helpful error is thrown
         expect((e as Error).message).toMatch(/file map not found/i);
       }
-    }, 20000);
+    });
 
     it('throws when syncing dependencies with invalid workspace root', async () => {
       await expect(

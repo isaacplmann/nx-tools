@@ -537,22 +537,35 @@ export class ProjectDatabase {
     });
   }
 
-  findDefinition(fileName: string, targetPackage: string): SymbolDefinition[] {
-    const configFilePath =
-      ts.findConfigFile(fileName, ts.sys.fileExists) ||
-      path.join(workspaceRoot, 'tsconfig.json');
-    const configHost: ts.ParseConfigFileHost = {
-      ...ts.sys,
-      onUnRecoverableConfigFileDiagnostic: () => {},
-    };
-    const parsed = ts.getParsedCommandLineOfConfigFile(
-      configFilePath,
-      undefined,
-      configHost
-    );
-    const program = ts.createProgram([fileName], parsed?.options || {});
-    const sourceFile = program.getSourceFile(fileName);
-    const checker = program.getTypeChecker();
+  // Accept an optional Program & TypeChecker to avoid rebuilding per-file (performance)
+  findDefinition(
+    fileName: string,
+    targetPackage: string,
+    program?: ts.Program,
+    checker?: ts.TypeChecker
+  ): SymbolDefinition[] {
+    let localProgram: ts.Program | undefined = program;
+    let localChecker: ts.TypeChecker | undefined = checker;
+
+    // If no program/checker provided, fall back to previous behavior (single-file program)
+    if (!localProgram || !localChecker) {
+      const configFilePath =
+        ts.findConfigFile(fileName, ts.sys.fileExists) ||
+        path.join(workspaceRoot, 'tsconfig.json');
+      const configHost: ts.ParseConfigFileHost = {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic: () => {},
+      };
+      const parsed = ts.getParsedCommandLineOfConfigFile(
+        configFilePath,
+        undefined,
+        configHost
+      );
+      localProgram = ts.createProgram([fileName], parsed?.options || {});
+      localChecker = localProgram.getTypeChecker();
+    }
+
+    const sourceFile = localProgram.getSourceFile(fileName);
     const foundSymbols: SymbolDefinition[] = [];
 
     function visit(node: ts.Node) {
@@ -571,16 +584,18 @@ export class ProjectDatabase {
           ) {
             // Handle Named Imports: import { useState, useEffect } from 'react'
             importClause.namedBindings.elements.forEach((namedImport) => {
-              const symbol = checker.getSymbolAtLocation(namedImport.name);
+              const symbol = localChecker!.getSymbolAtLocation(namedImport.name);
               let defined_in_file: string | undefined = undefined;
               if (symbol) {
                 // Follow the import chain to the original definition
-                const aliasedSymbol = checker.getAliasedSymbol(symbol);
+                const aliasedSymbol = localChecker!.getAliasedSymbol(symbol);
                 const declaration =
                   aliasedSymbol?.declarations?.[0] || symbol.declarations?.[0];
 
                 if (declaration) {
-                  defined_in_file = declaration.getSourceFile().fileName.replace(workspaceRoot + '/', '');
+                  defined_in_file = declaration
+                    .getSourceFile()
+                    .fileName.replace(workspaceRoot + '/', '');
                 }
               }
               foundSymbols.push({
@@ -588,6 +603,7 @@ export class ProjectDatabase {
                 defined_in_project: targetPackage,
                 defined_in_file,
               });
+              // Keep logging for now; can be toggled later if needed
               console.log(
                 `Import: ${namedImport.name.text} in ${fileName} defined in: ${defined_in_file}`
               );
@@ -598,7 +614,7 @@ export class ProjectDatabase {
       ts.forEachChild(node, visit);
     }
 
-    visit(sourceFile!);
+    if (sourceFile) visit(sourceFile);
     return foundSymbols;
   }
 
@@ -689,46 +705,133 @@ export class ProjectDatabase {
     const content = fs.readFileSync(fileMapPath, 'utf8');
     const parsed = JSON.parse(content) as any;
 
+    // Collect all file records to build a single TS program (faster than per-file)
+    const nonProjectFiles: Array<{ file: string; deps?: unknown }> =
+      parsed?.fileMap?.nonProjectFiles ?? [];
+    const projectFileMap = parsed?.fileMap?.projectFileMap ?? {};
+
+    const allEntries: Array<{ file: string; deps?: unknown }> = [];
+    for (const entry of nonProjectFiles) allEntries.push(entry);
+    for (const files of Object.values(projectFileMap)) {
+      for (const entry of (files as any)) allEntries.push(entry);
+    }
+
+    // Build absolute file list for TS program
+    const allFileAbs = Array.from(
+      new Set(allEntries.map((e) => path.resolve(root, e.file)))
+    );
+
+    // Try to create a single program; if it fails, fall back to per-file parsing
+    let program: ts.Program | undefined;
+    let checker: ts.TypeChecker | undefined;
+
+    try {
+      const configFilePath =
+        ts.findConfigFile(root, ts.sys.fileExists) ||
+        path.join(root, 'tsconfig.json');
+      const configHost: ts.ParseConfigFileHost = {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic: () => {},
+      };
+      const parsedConfig = ts.getParsedCommandLineOfConfigFile(
+        configFilePath,
+        undefined,
+        configHost
+      );
+
+      program = ts.createProgram(allFileAbs, parsedConfig?.options || {});
+      checker = program.getTypeChecker();
+    } catch (e) {
+      // If program creation fails (e.g., missing files in test environment), we will
+      // gracefully fall back to the previous per-file approach below.
+      program = undefined;
+      checker = undefined;
+    }
+
     let inserted = 0;
+
     await this.clearFileDependencies();
 
-    // Helper to process one record
-    const processEntry = async (filePathRel: string, deps: unknown) => {
+    // Gather dependency insertion records in memory first
+    const records: Array<{
+      filePath: string;
+      dependsOn: string;
+      defined_in_file?: string | null;
+    }> = [];
+
+    const processEntry = (filePathRel: string, deps: unknown) => {
       if (!deps || !Array.isArray(deps)) return;
       for (const dep of deps) {
-        // Accept only workspace file paths (exclude npm: or tuples with non-file info)
-        if (typeof dep === 'string') {
-          if (dep.startsWith('npm:') || dep === 'dynamic') continue;
-          await this.addFileDependency(filePathRel, dep);
-          inserted++;
-        } else if (
-          Array.isArray(dep) &&
-          dep.length > 0 &&
-          typeof dep[0] === 'string'
-        ) {
-          const depStr = dep[0] as string;
-          if (depStr.startsWith('npm:') || depStr === 'dynamic') continue;
-          await this.addFileDependency(filePathRel, depStr);
+        let depStr: string | undefined;
+        if (typeof dep === 'string') depStr = dep;
+        else if (Array.isArray(dep) && dep.length > 0 && typeof dep[0] === 'string')
+          depStr = dep[0] as string;
+        if (!depStr) continue;
+        if (depStr.startsWith('npm:') || depStr === 'dynamic') continue;
+
+        // Resolve file path to absolute when program provided
+        const absFile = path.resolve(root, filePathRel);
+
+        let found: SymbolDefinition[] = [];
+        if (program && checker) {
+          found = this.findDefinition(absFile, depStr, program, checker);
+        } else {
+          // Fallback to old behavior (slower)
+          found = this.findDefinition(filePathRel, depStr);
+        }
+
+        for (const f of found) {
+          records.push({
+            filePath: filePathRel,
+            dependsOn: depStr,
+            defined_in_file: f.defined_in_file ?? null,
+          });
           inserted++;
         }
       }
     };
 
-    // nonProjectFiles
-    const nonProjectFiles: Array<{ file: string; deps?: unknown }> =
-      parsed?.fileMap?.nonProjectFiles ?? [];
-    for (const entry of nonProjectFiles) {
-      await processEntry(entry.file, (entry as any).deps);
+    // Process all entries
+    for (const entry of allEntries) {
+      processEntry(entry.file, (entry as any).deps);
     }
 
-    // projectFileMap
-    const projectFileMap = parsed?.fileMap?.projectFileMap ?? {};
-    for (const project of Object.keys(projectFileMap)) {
-      const files: Array<{ file: string; deps?: unknown }> =
-        projectFileMap[project] ?? [];
-      for (const entry of files) {
-        await processEntry(entry.file, (entry as any).deps);
-      }
+    // Batch insert all records in a single transaction for performance
+    if (records.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        this.db.serialize(() => {
+          this.db.run('BEGIN TRANSACTION');
+          const stmt = this.db.prepare(
+            'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on_project, depends_on_file) VALUES (?, ?, ?)'
+          );
+
+          let pending = records.length;
+
+          for (const r of records) {
+            stmt.run([r.filePath, r.dependsOn, r.defined_in_file], (err: Error | null) => {
+              if (err) {
+                // Ensure stmt finalized and propagate error
+                stmt.finalize(() => {});
+                reject(err);
+                return;
+              }
+
+              pending--;
+              if (pending === 0) {
+                stmt.finalize((err) => {
+                  if (err) return reject(err);
+                  this.db.run('COMMIT', (err) => {
+                    if (err) return reject(err);
+                    resolve();
+                  });
+                });
+              }
+            });
+          }
+
+          // Handle case where records.length === 0 handled above
+        });
+      });
     }
 
     return inserted;

@@ -102,7 +102,7 @@ describe('db CLI', () => {
       cwd: repoRoot,
     });
     expect(finalList.stdout).toMatch(/No projects found/);
-  }, 20000);
+  });
 
   it('handles by-type and by-tag queries', async () => {
     // We'll use the database directly to set up test data since CLI doesn't have direct Nx project creation
@@ -150,7 +150,7 @@ describe('db CLI', () => {
     );
     expect(byTag.stdout).toMatch(/lib1/);
     expect(byTag.stdout).not.toMatch(/app1/);
-  }, 20000);
+  });
 
   it('handles affected files queries', async () => {
     // Set up test data
@@ -173,7 +173,7 @@ describe('db CLI', () => {
       { cwd: repoRoot }
     );
     expect(affected.stdout).toMatch(/affected-test/);
-  }, 20000);
+  });
 
   it('handles error cases properly', async () => {
     // Test missing project name
@@ -210,7 +210,7 @@ describe('db CLI', () => {
       const execError = error as { stderr?: string; stdout?: string };
       expect(execError.stderr || execError.stdout).toMatch(/not found/);
     }
-  }, 20000);
+  });
 
   it('shows help when no command provided', async () => {
     try {
@@ -220,7 +220,7 @@ describe('db CLI', () => {
       const execError = error as { stderr?: string; stdout?: string };
       expect(execError.stderr || execError.stdout).toMatch(/Usage:/);
     }
-  }, 20000);
+  });
 
   it('handles git commands properly', async () => {
     // Test sync-git with default count
@@ -322,5 +322,5 @@ describe('db CLI', () => {
         /Commit count must be a positive number/
       );
     }
-  }, 20000);
+  });
 });
