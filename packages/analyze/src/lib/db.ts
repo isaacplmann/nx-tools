@@ -776,6 +776,7 @@ export class ProjectDatabase {
   private async insertCommit(commit: GitCommit): Promise<number> {
     return new Promise((resolve, reject) => {
       // Use INSERT OR IGNORE to avoid duplicates
+      const dbRef = this.db;
       const stmt = this.db.prepare(`
         INSERT OR IGNORE INTO git_commits (hash, author, date, message) 
         VALUES (?, ?, ?, ?)
@@ -785,15 +786,29 @@ export class ProjectDatabase {
         function (err) {
           if (err) {
             reject(err);
-          } else {
-            // If we inserted a new row, use the lastID, otherwise get the existing ID
-            if (this.lastID > 0) {
-              resolve(this.lastID);
-            } else {
-              // Get the existing commit ID
-              reject(new Error('Failed to insert or retrieve commit'));
-            }
+            return;
           }
+
+          // If we inserted a new row, use the lastID
+          if ((this.lastID ?? 0) > 0) {
+            resolve(this.lastID as number);
+            return;
+          }
+
+          // Insert was ignored (duplicate hash). Query the existing row id.
+          dbRef.get(
+            'SELECT id FROM git_commits WHERE hash = ?',
+            [commit.hash],
+            (err2: Error | null, row: { id: number } | undefined) => {
+              if (err2) {
+                reject(err2);
+              } else if (row && typeof row.id === 'number') {
+                resolve(row.id);
+              } else {
+                reject(new Error('Failed to insert or retrieve commit'));
+              }
+            }
+          );
         }
       );
       stmt.finalize();

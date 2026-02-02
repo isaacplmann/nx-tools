@@ -38,6 +38,9 @@
     },
     {
       "path": "./example/apps/movies"
+    },
+    {
+      "path": "./packages/analyzer-e2e"
     }
   ]
 }
