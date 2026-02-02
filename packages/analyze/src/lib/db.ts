@@ -349,6 +349,38 @@ export class ProjectDatabase {
     });
   }
 
+  async getProjectsByType(projectType: string): Promise<Project[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM projects WHERE project_type = ? ORDER BY name',
+        [projectType],
+        (err: Error | null, rows: unknown[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as Project[]);
+          }
+        }
+      );
+    });
+  }
+
+  async getProjectsByTag(tag: string): Promise<Project[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        'SELECT * FROM projects WHERE tags LIKE ? ORDER BY name',
+        [`%${tag}%`],
+        (err: Error | null, rows: unknown[]) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(rows as Project[]);
+          }
+        }
+      );
+    });
+  }
+
   // File methods
   async addFileToProject(
     projectName: string,
@@ -598,11 +630,11 @@ export class ProjectDatabase {
   async getFileDependencies(filePath: string): Promise<string[]> {
     return new Promise((resolve, reject) => {
       this.db.all(
-        'SELECT depends_on FROM file_dependencies WHERE file_path = ? ORDER BY depends_on',
+        'SELECT depends_on_project FROM file_dependencies WHERE file_path = ? ORDER BY depends_on_project',
         [filePath],
-        (err: Error | null, rows: Array<{ depends_on: string }>) => {
+        (err: Error | null, rows: Array<{ depends_on_project: string }>) => {
           if (err) reject(err);
-          else resolve(rows.map((r) => r.depends_on));
+          else resolve(rows.map((r) => r.depends_on_project));
         }
       );
     });
@@ -611,7 +643,7 @@ export class ProjectDatabase {
   async getFileDependents(dependsOn: string): Promise<string[]> {
     return new Promise((resolve, reject) => {
       this.db.all(
-        'SELECT file_path FROM file_dependencies WHERE depends_on = ? ORDER BY file_path',
+        'SELECT file_path FROM file_dependencies WHERE depends_on_project = ? ORDER BY file_path',
         [dependsOn],
         (err: Error | null, rows: Array<{ file_path: string }>) => {
           if (err) reject(err);

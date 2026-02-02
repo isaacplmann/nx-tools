@@ -223,6 +223,96 @@ Examples:
         break;
       }
 
+      case 'add-file': {
+        const [projectName, filePath, fileType] = args.slice(1);
+        if (!projectName || !filePath) {
+          console.error('Project name and file path are required');
+          process.exit(1);
+        }
+        try {
+          // fileType may be a short string like 'ts' - convert to array to match API
+          await db.addFileToProject(
+            projectName,
+            filePath,
+            fileType ? [fileType] : undefined
+          );
+          console.log(`Added "${filePath}" to project "${projectName}"`);
+        } catch (error) {
+          console.error('Error:', error instanceof Error ? error.message : error);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'remove-file': {
+        const [projectName, filePath] = args.slice(1);
+        if (!projectName || !filePath) {
+          console.error('Project name and file path are required');
+          process.exit(1);
+        }
+        try {
+          const removed = await db.removeFileFromProject(projectName, filePath);
+          if (removed) {
+            console.log(`Removed "${filePath}" from project "${projectName}"`);
+          } else {
+            console.log(`File "${filePath}" not found in project "${projectName}"`);
+          }
+        } catch (error) {
+          console.error('Error:', error instanceof Error ? error.message : error);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'by-type': {
+        const [type] = args.slice(1);
+        if (!type) {
+          console.error('Project type is required');
+          process.exit(1);
+        }
+        const projects = await db.getProjectsByType(type);
+        if (projects.length === 0) {
+          console.log(`No projects of type "${type}"`);
+        } else {
+          console.log(`Projects of type "${type}":`);
+          projects.forEach((p) => console.log(`  ${p.name}`));
+        }
+        break;
+      }
+
+      case 'by-tag': {
+        const [tag] = args.slice(1);
+        if (!tag) {
+          console.error('Tag is required');
+          process.exit(1);
+        }
+        const projects = await db.getProjectsByTag(tag);
+        if (projects.length === 0) {
+          console.log(`No projects with tag "${tag}"`);
+        } else {
+          console.log(`Projects with tag "${tag}":`);
+          projects.forEach((p) => console.log(`  ${p.name}`));
+        }
+        break;
+      }
+
+      case 'git-affected': {
+        const [commitCountStr] = args.slice(1);
+        const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
+        if (isNaN(commitCount) || commitCount <= 0) {
+          console.error('Commit count must be a positive number');
+          process.exit(1);
+        }
+        const projects = await db.getProjectsTouchedByCommits(commitCount);
+        if (projects.length === 0) {
+          console.log('No projects affected');
+        } else {
+          console.log(`Projects affected by last ${commitCount} commits:`);
+          projects.forEach((p) => console.log(`  ${p}`));
+        }
+        break;
+      }
+
       case 'affected': {
         const changedFiles = args.slice(1);
         if (changedFiles.length === 0) {
