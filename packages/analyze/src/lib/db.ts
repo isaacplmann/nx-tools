@@ -883,14 +883,17 @@ export class ProjectDatabase {
       const query = `
         SELECT DISTINCT tf.file_path 
         FROM touched_files tf
-        JOIN git_commits gc ON tf.commit_id = gc.id
-        ORDER BY gc.date DESC
-        LIMIT ?
+        WHERE tf.commit_id IN (
+          SELECT id FROM git_commits 
+          ORDER BY date DESC 
+          LIMIT ?
+        )
+        ORDER BY tf.file_path
       `;
 
       this.db.all(
         query,
-        [commitCount * 10],
+        [commitCount],
         (err, rows: { file_path: string }[]) => {
           if (err) {
             reject(err);
@@ -902,21 +905,21 @@ export class ProjectDatabase {
     });
   }
 
-  async getProjectsAffectedByCommits(commitCount = 100): Promise<string[]> {
+  async getProjectsTouchedByCommits(commitCount = 100): Promise<string[]> {
     try {
       const touchedFiles = await this.getFilesTouchedInLastCommits(commitCount);
-      const affectedProjects = new Set<string>();
+      const touchedProjects = new Set<string>();
 
       for (const filePath of touchedFiles) {
         const projects = await this.getFileProjects(filePath);
         for (const project of projects) {
-          affectedProjects.add(project.name);
+          touchedProjects.add(project.name);
         }
       }
 
-      return Array.from(affectedProjects);
+      return Array.from(touchedProjects);
     } catch (error) {
-      console.warn('Could not determine projects affected by commits:', error);
+      console.warn('Could not determine projects touched by commits:', error);
       return [];
     }
   }

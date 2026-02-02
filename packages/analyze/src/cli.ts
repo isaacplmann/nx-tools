@@ -24,7 +24,7 @@ Commands:
   sync-git [commit-count]                Sync git commits and touched files (default: 100 commits)
   list-commits [limit]                   List recent git commits from database (default: 50)
   touched-files [commit-hash]            List files touched in commits (optionally for specific commit)
-  git-affected [commit-count]            Show projects affected by recent git changes (default: 100)
+  touched-projects [commit-count]        Show projects touched by recent git changes (default: 100)
 
   File Dependency Commands:
   sync-file-deps [workspace-root]        Sync file dependencies from Nx file-map.json
@@ -302,25 +302,25 @@ Examples:
         break;
       }
 
-      case 'git-affected': {
+      case 'touched-projects': {
         const [commitCountStr] = args.slice(1);
         const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
         if (isNaN(commitCount) || commitCount <= 0) {
           console.error('Commit count must be a positive number');
           process.exit(1);
         }
-        const affectedProjects = await db.getProjectsAffectedByCommits(
+        const touchedProjects = await db.getProjectsTouchedByCommits(
           commitCount
         );
-        if (affectedProjects.length === 0) {
+        if (touchedProjects.length === 0) {
           console.log(
-            `No projects affected by changes in last ${commitCount} commits`
+            `No projects touched by changes in last ${commitCount} commits`
           );
         } else {
           console.log(
-            `Projects affected by changes in last ${commitCount} commits:`
+            `Projects touched by changes in last ${commitCount} commits:`
           );
-          affectedProjects.forEach((project) => {
+          touchedProjects.forEach((project) => {
             console.log(`  ${project}`);
           });
         }
