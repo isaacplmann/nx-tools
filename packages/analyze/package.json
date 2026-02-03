@@ -1,5 +1,5 @@
 {
-  "name": "@nx-tools/db",
+  "name": "@nx-tools/analyze",
   "version": "0.0.0-e2e",
   "private": false,
   "type": "module",
