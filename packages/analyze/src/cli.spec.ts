@@ -1,8 +1,7 @@
-import { execFile } from 'child_process';
-import * as util from 'util';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+import { runCLI } from './cli';
 
 // Mock Nx devkit to avoid creating background native handles in the test process
 jest.mock('@nx/devkit', () => ({
@@ -10,11 +9,6 @@ jest.mock('@nx/devkit', () => ({
   createProjectFileMapUsingProjectGraph: async () => ({}),
   workspaceRoot: process.cwd(),
 }));
-
-const execFileAsync = util.promisify(execFile);
-const node = process.execPath;
-// Execute built CLI to avoid TS runtime loaders
-const cliPath = path.resolve(__dirname, '../dist/cli.js');
 
 describe('db CLI', () => {
   // Use current workspace root (avoid depending on external sibling repos)
@@ -26,6 +20,18 @@ describe('db CLI', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nx-db-cli-'));
     dbFile = path.join(repoRoot, 'nx-projects.db');
   });
+
+  // Helper to call the CLI in-process and capture its output
+  const run = async (args: string[]) => {
+    let out = '';
+    let err = '';
+    const logger = {
+      log: (...a: any[]) => (out += a.join(' ') + '\n'),
+      error: (...a: any[]) => (err += a.join(' ') + '\n'),
+    };
+    const code = await runCLI(args, { dbPath: dbFile, logger });
+    return { stdout: out, stderr: err, code };
+  };
 
   afterAll(() => {
     try {
@@ -43,66 +49,38 @@ describe('db CLI', () => {
 
   it('creates, lists, adds files to, finds and deletes a project via the CLI', async () => {
     // Create a project
-    const create = await execFileAsync(
-      node,
-      [cliPath, 'create-project', 'cli-proj', 'CLI project'],
-      { cwd: repoRoot }
-    );
+    const create = await run(['create-project', 'cli-proj', 'CLI project']);
     expect(create.stdout).toMatch(/Created project "cli-proj"/);
     expect(fs.existsSync(dbFile)).toBe(true);
 
     // List projects
-    const list = await execFileAsync(node, [cliPath, 'list-projects'], {
-      cwd: repoRoot,
-    });
+    const list = await run(['list-projects']);
     expect(list.stdout).toMatch(/cli-proj/);
 
     // Add a file to the project
-    const add = await execFileAsync(
-      node,
-      [cliPath, 'add-file', 'cli-proj', 'src/main.ts', 'ts'],
-      { cwd: repoRoot }
-    );
+    const add = await run(['add-file', 'cli-proj', 'src/main.ts', 'ts']);
     expect(add.stdout).toMatch(/Added "src\/main.ts" to project "cli-proj"/);
 
     // List files
-    const listFiles = await execFileAsync(
-      node,
-      [cliPath, 'list-files', 'cli-proj'],
-      { cwd: repoRoot }
-    );
+    const listFiles = await run(['list-files', 'cli-proj']);
     expect(listFiles.stdout).toMatch(/src\/main.ts/);
 
     // Find projects containing the file
-    const find = await execFileAsync(
-      node,
-      [cliPath, 'find-projects', 'src/main.ts'],
-      { cwd: repoRoot }
-    );
+    const find = await run(['find-projects', 'src/main.ts']);
     expect(find.stdout).toMatch(/cli-proj/);
 
     // Remove file
-    const remove = await execFileAsync(
-      node,
-      [cliPath, 'remove-file', 'cli-proj', 'src/main.ts'],
-      { cwd: repoRoot }
-    );
+    const remove = await run(['remove-file', 'cli-proj', 'src/main.ts']);
     expect(remove.stdout).toMatch(
       /Removed "src\/main.ts" from project "cli-proj"/
     );
 
     // Delete project
-    const del = await execFileAsync(
-      node,
-      [cliPath, 'delete-project', 'cli-proj'],
-      { cwd: repoRoot }
-    );
+    const del = await run(['delete-project', 'cli-proj']);
     expect(del.stdout).toMatch(/Deleted project "cli-proj"/);
 
     // Final list should not include project
-    const finalList = await execFileAsync(node, [cliPath, 'list-projects'], {
-      cwd: repoRoot,
-    });
+    const finalList = await run(['list-projects']);
     expect(finalList.stdout).toMatch(/No projects found/);
   });
 
@@ -135,21 +113,13 @@ describe('db CLI', () => {
     }
 
     // Test by-type query
-    const byType = await execFileAsync(
-      node,
-      [cliPath, 'by-type', 'application'],
-      { cwd: repoRoot }
-    );
+    const byType = await run(['by-type', 'application']);
     expect(byType.stdout).toMatch(/app1/);
     expect(byType.stdout).toMatch(/app2/);
     expect(byType.stdout).not.toMatch(/lib1/);
 
     // Test by-tag query
-    const byTag = await execFileAsync(
-      node,
-      [cliPath, 'by-tag', 'scope:shared'],
-      { cwd: repoRoot }
-    );
+    const byTag = await run(['by-tag', 'scope:shared']);
     expect(byTag.stdout).toMatch(/lib1/);
     expect(byTag.stdout).not.toMatch(/app1/);
   });
@@ -169,167 +139,84 @@ describe('db CLI', () => {
     }
 
     // Test affected command
-    const affected = await execFileAsync(
-      node,
-      [cliPath, 'affected', 'src/utils.ts'],
-      { cwd: repoRoot }
-    );
+    const affected = await run(['affected', 'src/utils.ts']);
     expect(affected.stdout).toMatch(/affected-test/);
   });
 
   it('handles error cases properly', async () => {
     // Test missing project name
-    try {
-      await execFileAsync(node, [cliPath, 'create-project'], { cwd: repoRoot });
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(
-        /Project name is required/
-      );
-    }
+    // Test missing project name
+    const missing = await run(['create-project']);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr || missing.stdout).toMatch(/Project name is required/);
 
     // Test unknown command
-    try {
-      await execFileAsync(node, [cliPath, 'unknown-command'], {
-        cwd: repoRoot,
-      });
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(/Unknown command/);
-    }
+    const unknown = await run(['unknown-command']);
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr || unknown.stdout).toMatch(/Unknown command/);
 
     // Test adding file to non-existent project
-    try {
-      await execFileAsync(
-        node,
-        [cliPath, 'add-file', 'nonexistent', 'file.ts'],
-        { cwd: repoRoot }
-      );
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(/not found/);
-    }
+    const addNon = await run(['add-file', 'nonexistent', 'file.ts']);
+    expect(addNon.code).toBe(1);
+    expect(addNon.stderr || addNon.stdout).toMatch(/not found/);
   });
 
   it('shows help when no command provided', async () => {
-    try {
-      await execFileAsync(node, [cliPath], { cwd: repoRoot });
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(/Usage:/);
-    }
+    const help = await run([]);
+    expect(help.stdout).toMatch(/Usage:/);
   });
 
   it('handles git commands properly', async () => {
     // Test sync-git with default count
-    const syncGit = await execFileAsync(node, [cliPath, 'sync-git'], {
-      cwd: repoRoot,
-    });
+    const syncGit = await run(['sync-git']);
     expect(syncGit.stdout).toMatch(/Syncing last 100 git commits/);
     expect(syncGit.stdout).toMatch(/Git sync completed successfully/);
 
     // Test list-commits
-    const listCommits = await execFileAsync(
-      node,
-      [cliPath, 'list-commits', '10'],
-      { cwd: repoRoot }
-    );
+    const listCommits = await run(['list-commits', '10']);
     expect(listCommits.stdout).toMatch(/Recent commits|No commits found/);
 
     // Test touched-files
-    const touchedFiles = await execFileAsync(node, [cliPath, 'touched-files'], {
-      cwd: repoRoot,
-    });
-    expect(touchedFiles.stdout).toMatch(
-      /Recently touched files|No touched files found/
-    );
+    const touchedFiles = await run(['touched-files']);
+    expect(touchedFiles.stdout).toMatch(/Recently touched files|No touched files found/);
 
     // Test git-affected
-    const gitAffected = await execFileAsync(
-      node,
-      [cliPath, 'git-affected', '10'],
-      { cwd: repoRoot }
-    );
-    expect(gitAffected.stdout).toMatch(
-      /Projects affected|No projects affected/
-    );
+    const gitAffected = await run(['git-affected', '10']);
+    expect(gitAffected.stdout).toMatch(/Projects affected|No projects affected/);
   }, 30000);
 
   it('syncs and queries file dependencies via CLI', async () => {
     // Sync file dependencies - may fail if Nx file map is not present in the test workspace
-    try {
-      const sync = await execFileAsync(node, [cliPath, 'sync-file-deps'], {
-        cwd: repoRoot,
-      });
+    const sync = await run(['sync-file-deps']);
+    if (sync.code === 0) {
       expect(sync.stdout).toMatch(/Syncing file dependencies from Nx file map/);
-    } catch (err) {
-      const execError = err as { stderr?: string; stdout?: string };
-      expect((execError.stderr || execError.stdout || '').toLowerCase()).toMatch(
-        /file map not found|file-map.json/i
-      );
+    } else {
+      expect((sync.stderr || sync.stdout || '').toLowerCase()).toMatch(/file map not found|file-map.json/i);
     }
 
     // Query deps for a common file (may be empty depending on workspace)
-    const depsOut = await execFileAsync(
-      node,
-      [cliPath, 'file-deps', 'package.json'],
-      { cwd: repoRoot }
-    );
+    const depsOut = await run(['file-deps', 'package.json']);
     expect(depsOut.stdout).toMatch(/Dependencies of|No dependencies recorded/);
 
     // Query dependents for a common file
-    const dependentsOut = await execFileAsync(
-      node,
-      [cliPath, 'file-dependents', 'package.json'],
-      { cwd: repoRoot }
-    );
-    expect(dependentsOut.stdout).toMatch(
-      /Files depending on|No dependents recorded/
-    );
+    const dependentsOut = await run(['file-dependents', 'package.json']);
+    expect(dependentsOut.stdout).toMatch(/Files depending on|No dependents recorded/);
   }, 30000);
 
   it('validates git command parameters', async () => {
     // Test invalid commit count for sync-git
-    try {
-      await execFileAsync(node, [cliPath, 'sync-git', 'invalid'], {
-        cwd: repoRoot,
-      });
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(
-        /Commit count must be a positive number/
-      );
-    }
+    const invalidSync = await run(['sync-git', 'invalid']);
+    expect(invalidSync.code).toBe(1);
+    expect(invalidSync.stderr || invalidSync.stdout).toMatch(/Commit count must be a positive number/);
 
     // Test invalid limit for list-commits
-    try {
-      await execFileAsync(node, [cliPath, 'list-commits', '-1'], {
-        cwd: repoRoot,
-      });
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(
-        /Limit must be a positive number/
-      );
-    }
+    const invalidLimit = await run(['list-commits', '-1']);
+    expect(invalidLimit.code).toBe(1);
+    expect(invalidLimit.stderr || invalidLimit.stdout).toMatch(/Limit must be a positive number/);
 
     // Test invalid commit count for git-affected
-    try {
-      await execFileAsync(node, [cliPath, 'git-affected', '0'], {
-        cwd: repoRoot,
-      });
-      fail('Should have thrown an error');
-    } catch (error) {
-      const execError = error as { stderr?: string; stdout?: string };
-      expect(execError.stderr || execError.stdout).toMatch(
-        /Commit count must be a positive number/
-      );
-    }
+    const invalidAffected = await run(['git-affected', '0']);
+    expect(invalidAffected.code).toBe(1);
+    expect(invalidAffected.stderr || invalidAffected.stdout).toMatch(/Commit count must be a positive number/);
   });
 });

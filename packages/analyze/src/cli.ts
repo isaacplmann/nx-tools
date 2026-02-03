@@ -4,12 +4,18 @@ import { ProjectDatabase } from './lib/db.js';
 import * as process from 'process';
 import * as path from 'path';
 
-async function main() {
-  const args = process.argv.slice(2);
+export async function runCLI(
+  args: string[],
+  opts?: {
+    dbPath?: string;
+    logger?: { log: (...a: any[]) => void; error: (...a: any[]) => void };
+  }
+): Promise<number> {
+  const logger = opts?.logger ?? console;
   const command = args[0];
 
   if (!command) {
-    console.log(`
+    logger.log(`
 Usage: nx-tools-db <command> [options]
 
 Commands:
@@ -44,10 +50,10 @@ Examples:
   nx-tools-db touched-files abc123       # Show files touched in commit abc123
   nx-tools-db git-affected 50            # Show projects affected by last 50 commits
 `);
-    process.exit(1);
+    return 1;
   }
 
-  const dbPath = path.join(process.cwd(), 'nx-projects.db');
+  const dbPath = opts?.dbPath ?? path.join(process.cwd(), 'nx-projects.db');
   const db = new ProjectDatabase(dbPath);
   let exitCode = 0;
 
@@ -55,12 +61,10 @@ Examples:
     switch (command) {
       case 'sync-nx': {
         const [workspaceRoot] = args.slice(1);
-        console.log('Syncing Nx workspace to database...');
+        logger.log('Syncing Nx workspace to database...');
         const projectGraph = await db.syncWithNxWorkspace(workspaceRoot);
-        console.log(
-          `Successfully synced ${
-            Object.keys(projectGraph.nodes).length
-          } projects`
+        logger.log(
+          `Successfully synced ${Object.keys(projectGraph.nodes).length} projects`
         );
         break;
       }
@@ -68,26 +72,22 @@ Examples:
       case 'create-project': {
         const [name, description] = args.slice(1);
         if (!name) {
-          console.error('Project name is required');
-          process.exit(1);
+          logger.error('Project name is required');
+          return 1;
         }
         const id = await db.createProject(name, description);
-        console.log(`Created project "${name}" with ID ${id}`);
+        logger.log(`Created project "${name}" with ID ${id}`);
         break;
       }
 
       case 'list-projects': {
         const projects = await db.getAllProjects();
         if (projects.length === 0) {
-          console.log('No projects found');
+          logger.log('No projects found');
         } else {
-          console.log('Projects:');
+          logger.log('Projects:');
           projects.forEach((project) => {
-            console.log(
-              `  ${project.name}${
-                project.description ? ` - ${project.description}` : ''
-              }`
-            );
+            logger.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''}`);
           });
         }
         break;
@@ -96,14 +96,14 @@ Examples:
       case 'delete-project': {
         const [name] = args.slice(1);
         if (!name) {
-          console.error('Project name is required');
-          process.exit(1);
+          logger.error('Project name is required');
+          return 1;
         }
         const deleted = await db.deleteProject(name);
         if (deleted) {
-          console.log(`Deleted project "${name}"`);
+          logger.log(`Deleted project "${name}"`);
         } else {
-          console.log(`Project "${name}" not found`);
+          logger.log(`Project "${name}" not found`);
         }
         break;
       }
@@ -111,20 +111,16 @@ Examples:
       case 'list-files': {
         const [projectName] = args.slice(1);
         if (!projectName) {
-          console.error('Project name is required');
-          process.exit(1);
+          logger.error('Project name is required');
+          return 1;
         }
         const files = await db.getProjectFiles(projectName);
         if (files.length === 0) {
-          console.log(`No files found in project "${projectName}"`);
+          logger.log(`No files found in project "${projectName}"`);
         } else {
-          console.log(`Files in project "${projectName}":`);
+          logger.log(`Files in project "${projectName}":`);
           files.forEach((file) => {
-            console.log(
-              `  ${file.file_path}${
-                file.file_type ? ` (${file.file_type})` : ''
-              }`
-            );
+            logger.log(`  ${file.file_path}${file.file_type ? ` (${file.file_type})` : ''}`);
           });
         }
         break;
@@ -133,16 +129,16 @@ Examples:
       case 'find-projects': {
         const [filePath] = args.slice(1);
         if (!filePath) {
-          console.error('File path is required');
-          process.exit(1);
+          logger.error('File path is required');
+          return 1;
         }
         const projects = await db.getFileProjects(filePath);
         if (projects.length === 0) {
-          console.log(`File "${filePath}" not found in any project`);
+          logger.log(`File "${filePath}" not found in any project`);
         } else {
-          console.log(`File "${filePath}" found in projects:`);
+          logger.log(`File "${filePath}" found in projects:`);
           projects.forEach((project) => {
-            console.log(`  ${project.name}`);
+            logger.log(`  ${project.name}`);
           });
         }
         break;
@@ -150,24 +146,24 @@ Examples:
 
       case 'sync-file-deps': {
         const [workspaceRoot] = args.slice(1);
-        console.log('Syncing file dependencies from Nx file map...');
+        logger.log('Syncing file dependencies from Nx file map...');
         const count = await db.syncFileDependenciesFromNx(workspaceRoot);
-        console.log(`Synced ${count} file dependency relations`);
+        logger.log(`Synced ${count} file dependency relations`);
         break;
       }
 
       case 'file-deps': {
         const [filePath] = args.slice(1);
         if (!filePath) {
-          console.error('File path is required');
-          process.exit(1);
+          logger.error('File path is required');
+          return 1;
         }
         const deps = await db.getFileDependencies(filePath);
         if (deps.length === 0) {
-          console.log(`No dependencies recorded for "${filePath}"`);
+          logger.log(`No dependencies recorded for "${filePath}"`);
         } else {
-          console.log(`Dependencies of "${filePath}":`);
-          deps.forEach((d) => console.log(`  ${d}`));
+          logger.log(`Dependencies of "${filePath}":`);
+          deps.forEach((d) => logger.log(`  ${d}`));
         }
         break;
       }
@@ -175,15 +171,15 @@ Examples:
       case 'file-dependents': {
         const [filePath] = args.slice(1);
         if (!filePath) {
-          console.error('File path is required');
-          process.exit(1);
+          logger.error('File path is required');
+          return 1;
         }
         const dependents = await db.getFileDependents(filePath);
         if (dependents.length === 0) {
-          console.log(`No dependents recorded for "${filePath}"`);
+          logger.log(`No dependents recorded for "${filePath}"`);
         } else {
-          console.log(`Files depending on "${filePath}":`);
-          dependents.forEach((f) => console.log(`  ${f}`));
+          logger.log(`Files depending on "${filePath}":`);
+          dependents.forEach((f) => logger.log(`  ${f}`));
         }
         break;
       }
@@ -191,16 +187,16 @@ Examples:
       case 'dependencies': {
         const [projectName] = args.slice(1);
         if (!projectName) {
-          console.error('Project name is required');
-          process.exit(1);
+          logger.error('Project name is required');
+          return 1;
         }
         const dependencies = await db.getProjectDependencies(projectName);
         if (dependencies.length === 0) {
-          console.log(`Project "${projectName}" has no dependencies`);
+          logger.log(`Project "${projectName}" has no dependencies`);
         } else {
-          console.log(`Dependencies of "${projectName}":`);
+          logger.log(`Dependencies of "${projectName}":`);
           dependencies.forEach((dep) => {
-            console.log(`  ${dep}`);
+            logger.log(`  ${dep}`);
           });
         }
         break;
@@ -209,16 +205,16 @@ Examples:
       case 'dependents': {
         const [projectName] = args.slice(1);
         if (!projectName) {
-          console.error('Project name is required');
-          process.exit(1);
+          logger.error('Project name is required');
+          return 1;
         }
         const dependents = await db.getProjectDependents(projectName);
         if (dependents.length === 0) {
-          console.log(`No projects depend on "${projectName}"`);
+          logger.log(`No projects depend on "${projectName}"`);
         } else {
-          console.log(`Projects that depend on "${projectName}":`);
+          logger.log(`Projects that depend on "${projectName}":`);
           dependents.forEach((dep) => {
-            console.log(`  ${dep}`);
+            logger.log(`  ${dep}`);
           });
         }
         break;
@@ -227,20 +223,16 @@ Examples:
       case 'add-file': {
         const [projectName, filePath, fileType] = args.slice(1);
         if (!projectName || !filePath) {
-          console.error('Project name and file path are required');
-          process.exit(1);
+          logger.error('Project name and file path are required');
+          return 1;
         }
         try {
           // fileType may be a short string like 'ts' - convert to array to match API
-          await db.addFileToProject(
-            projectName,
-            filePath,
-            fileType ? [fileType] : undefined
-          );
-          console.log(`Added "${filePath}" to project "${projectName}"`);
+          await db.addFileToProject(projectName, filePath, fileType ? [fileType] : undefined);
+          logger.log(`Added "${filePath}" to project "${projectName}"`);
         } catch (error) {
-          console.error('Error:', error instanceof Error ? error.message : error);
-          process.exit(1);
+          logger.error('Error:', error instanceof Error ? error.message : error);
+          return 1;
         }
         break;
       }
@@ -248,19 +240,19 @@ Examples:
       case 'remove-file': {
         const [projectName, filePath] = args.slice(1);
         if (!projectName || !filePath) {
-          console.error('Project name and file path are required');
-          process.exit(1);
+          logger.error('Project name and file path are required');
+          return 1;
         }
         try {
           const removed = await db.removeFileFromProject(projectName, filePath);
           if (removed) {
-            console.log(`Removed "${filePath}" from project "${projectName}"`);
+            logger.log(`Removed "${filePath}" from project "${projectName}"`);
           } else {
-            console.log(`File "${filePath}" not found in project "${projectName}"`);
+            logger.log(`File "${filePath}" not found in project "${projectName}"`);
           }
         } catch (error) {
-          console.error('Error:', error instanceof Error ? error.message : error);
-          process.exit(1);
+          logger.error('Error:', error instanceof Error ? error.message : error);
+          return 1;
         }
         break;
       }
@@ -268,15 +260,15 @@ Examples:
       case 'by-type': {
         const [type] = args.slice(1);
         if (!type) {
-          console.error('Project type is required');
-          process.exit(1);
+          logger.error('Project type is required');
+          return 1;
         }
         const projects = await db.getProjectsByType(type);
         if (projects.length === 0) {
-          console.log(`No projects of type "${type}"`);
+          logger.log(`No projects of type "${type}"`);
         } else {
-          console.log(`Projects of type "${type}":`);
-          projects.forEach((p) => console.log(`  ${p.name}`));
+          logger.log(`Projects of type "${type}":`);
+          projects.forEach((p) => logger.log(`  ${p.name}`));
         }
         break;
       }
@@ -284,15 +276,15 @@ Examples:
       case 'by-tag': {
         const [tag] = args.slice(1);
         if (!tag) {
-          console.error('Tag is required');
-          process.exit(1);
+          logger.error('Tag is required');
+          return 1;
         }
         const projects = await db.getProjectsByTag(tag);
         if (projects.length === 0) {
-          console.log(`No projects with tag "${tag}"`);
+          logger.log(`No projects with tag "${tag}"`);
         } else {
-          console.log(`Projects with tag "${tag}":`);
-          projects.forEach((p) => console.log(`  ${p.name}`));
+          logger.log(`Projects with tag "${tag}":`);
+          projects.forEach((p) => logger.log(`  ${p.name}`));
         }
         break;
       }
@@ -301,15 +293,15 @@ Examples:
         const [commitCountStr] = args.slice(1);
         const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
         if (isNaN(commitCount) || commitCount <= 0) {
-          console.error('Commit count must be a positive number');
-          process.exit(1);
+          logger.error('Commit count must be a positive number');
+          return 1;
         }
         const projects = await db.getProjectsTouchedByCommits(commitCount);
         if (projects.length === 0) {
-          console.log('No projects affected');
+          logger.log('No projects affected');
         } else {
-          console.log(`Projects affected by last ${commitCount} commits:`);
-          projects.forEach((p) => console.log(`  ${p}`));
+          logger.log(`Projects affected by last ${commitCount} commits:`);
+          projects.forEach((p) => logger.log(`  ${p}`));
         }
         break;
       }
@@ -317,18 +309,16 @@ Examples:
       case 'affected': {
         const changedFiles = args.slice(1);
         if (changedFiles.length === 0) {
-          console.error('At least one file path is required');
-          process.exit(1);
+          logger.error('At least one file path is required');
+          return 1;
         }
         const affectedProjects = await db.getAffectedProjects(changedFiles);
         if (affectedProjects.length === 0) {
-          console.log('No projects are affected by the changed files');
+          logger.log('No projects are affected by the changed files');
         } else {
-          console.log(
-            `Projects affected by changes to: ${changedFiles.join(', ')}`
-          );
+          logger.log(`Projects affected by changes to: ${changedFiles.join(', ')}`);
           affectedProjects.forEach((project) => {
-            console.log(`  ${project}`);
+            logger.log(`  ${project}`);
           });
         }
         break;
@@ -338,12 +328,12 @@ Examples:
         const [commitCountStr] = args.slice(1);
         const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
         if (isNaN(commitCount) || commitCount <= 0) {
-          console.error('Commit count must be a positive number');
-          process.exit(1);
+          logger.error('Commit count must be a positive number');
+          return 1;
         }
-        console.log(`Syncing last ${commitCount} git commits...`);
+        logger.log(`Syncing last ${commitCount} git commits...`);
         await db.syncGitCommits(commitCount);
-        console.log('Git sync completed successfully');
+        logger.log('Git sync completed successfully');
         break;
       }
 
@@ -351,23 +341,21 @@ Examples:
         const [limitStr] = args.slice(1);
         const limit = limitStr ? parseInt(limitStr, 10) : 50;
         if (isNaN(limit) || limit <= 0) {
-          console.error('Limit must be a positive number');
-          process.exit(1);
+          logger.error('Limit must be a positive number');
+          return 1;
         }
         const commits = await db.getCommits(limit);
         if (commits.length === 0) {
-          console.log('No commits found in database');
+          logger.log('No commits found in database');
         } else {
-          console.log(`Recent commits (last ${commits.length}):`);
+          logger.log(`Recent commits (last ${commits.length}):`);
           commits.forEach((commit) => {
             const shortHash = commit.hash.substring(0, 8);
             const shortMessage =
               commit.message.length > 60
                 ? commit.message.substring(0, 60) + '...'
                 : commit.message;
-            console.log(
-              `  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`
-            );
+            logger.log(`  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`);
           });
         }
         break;
@@ -380,14 +368,14 @@ Examples:
           const msg = commitHash
             ? `No files found for commit ${commitHash}`
             : 'No touched files found in database';
-          console.log(msg);
+          logger.log(msg);
         } else {
           const msg = commitHash
             ? `Files touched in commit ${commitHash}:`
             : 'Recently touched files:';
-          console.log(msg);
+          logger.log(msg);
           touchedFiles.forEach((file) => {
-            console.log(`  ${file.change_type} ${file.file_path}`);
+            logger.log(`  ${file.change_type} ${file.file_path}`);
           });
         }
         break;
@@ -397,42 +385,43 @@ Examples:
         const [commitCountStr] = args.slice(1);
         const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
         if (isNaN(commitCount) || commitCount <= 0) {
-          console.error('Commit count must be a positive number');
-          process.exit(1);
+          logger.error('Commit count must be a positive number');
+          return 1;
         }
-        const touchedProjects = await db.getProjectsTouchedByCommits(
-          commitCount
-        );
+        const touchedProjects = await db.getProjectsTouchedByCommits(commitCount);
         if (touchedProjects.length === 0) {
-          console.log(
-            `No projects touched by changes in last ${commitCount} commits`
-          );
+          logger.log(`No projects touched by changes in last ${commitCount} commits`);
         } else {
-          console.log(
-            `Projects touched by changes in last ${commitCount} commits:`
-          );
+          logger.log(`Projects touched by changes in last ${commitCount} commits:`);
           touchedProjects.forEach((project) => {
-            console.log(`  ${project}`);
+            logger.log(`  ${project}`);
           });
         }
         break;
       }
 
       default:
-        console.error(`Unknown command: ${command}`);
-        process.exit(1);
+        logger.error(`Unknown command: ${command}`);
+        return 1;
     }
   } catch (error) {
-    console.error('Error:', error instanceof Error ? error.message : error);
+    logger.error('Error:', error instanceof Error ? error.message : error);
     exitCode = 1;
   } finally {
     await db.close();
   }
 
-  process.exit(exitCode);
+  return exitCode;
 }
 
-main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+if (typeof process.env.JEST_WORKER_ID === 'undefined') {
+  async function main() {
+    const code = await runCLI(process.argv.slice(2));
+    process.exit(code);
+  }
+
+  main().catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
+}

@@ -158,10 +158,6 @@ export class ProjectDatabase {
           files
         );
       }
-
-      console.log(
-        `Synced ${Object.keys(fileMap).length} Nx projects to database`
-      );
       return projectGraph;
     } catch (error) {
       throw new Error(
@@ -604,9 +600,9 @@ export class ProjectDatabase {
                 defined_in_file,
               });
               // Keep logging for now; can be toggled later if needed
-              console.log(
-                `Import: ${namedImport.name.text} in ${fileName} defined in: ${defined_in_file}`
-              );
+              // console.log(
+              //   `Import: ${namedImport.name.text} in ${fileName} defined in: ${defined_in_file}`
+              // );
             });
           }
         }
@@ -884,8 +880,6 @@ export class ProjectDatabase {
           touchedFiles
         );
       }
-
-      console.log(`Synced ${commitCount} git commits to database`);
     } catch (error) {
       throw new Error(
         `Failed to sync git commits: ${
