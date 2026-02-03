@@ -1,6 +1,14 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+
+// Mock Nx devkit to prevent NX daemon native handles from being created during tests
+jest.mock('@nx/devkit', () => ({
+  createProjectGraphAsync: async () => ({ nodes: {}, dependencies: {} }),
+  createProjectFileMapUsingProjectGraph: async () => ({}),
+  workspaceRoot: process.cwd(),
+}));
+
 import { ProjectDatabase, createDatabase, db } from './db.js';
 
 describe('ProjectDatabase', () => {
@@ -17,8 +25,8 @@ describe('ProjectDatabase', () => {
     pdb = new ProjectDatabase(dbFile);
   });
 
-  afterAll(() => {
-    pdb.close();
+  afterAll(async () => {
+    await pdb.close();
     try {
       if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
     } catch {
@@ -418,7 +426,7 @@ describe('ProjectDatabase', () => {
       );
       const db = new ProjectDatabase(tempDb);
       await db.createProject('test', 'test');
-      db.close();
+      await db.close();
 
       try {
         if (fs.existsSync(tempDb)) fs.unlinkSync(tempDb);
@@ -448,7 +456,7 @@ describe('ProjectDatabase', () => {
       );
       const database = await createDatabase(tempDb);
       expect(database).toBeInstanceOf(ProjectDatabase);
-      database.close();
+      await database.close();
 
       try {
         if (fs.existsSync(tempDb)) fs.unlinkSync(tempDb);

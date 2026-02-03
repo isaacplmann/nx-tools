@@ -79,7 +79,7 @@ async function example() {
     console.error('Error:', error);
   } finally {
     // Always close the database connection
-    db.close();
+    await db.close();
   }
 }
 

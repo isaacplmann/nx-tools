@@ -49,6 +49,7 @@ Examples:
 
   const dbPath = path.join(process.cwd(), 'nx-projects.db');
   const db = new ProjectDatabase(dbPath);
+  let exitCode = 0;
 
   try {
     switch (command) {
@@ -423,12 +424,12 @@ Examples:
     }
   } catch (error) {
     console.error('Error:', error instanceof Error ? error.message : error);
-    db.close();
-    process.exit(1);
+    exitCode = 1;
   } finally {
-    db.close();
-    process.exit(0);
+    await db.close();
   }
+
+  process.exit(exitCode);
 }
 
 main().catch((error) => {

@@ -1059,8 +1059,13 @@ export class ProjectDatabase {
     }
   }
 
-  close(): void {
-    this.db.close();
+  async close(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.close((err: Error | null) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
   }
 }
 

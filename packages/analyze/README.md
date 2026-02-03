@@ -48,7 +48,7 @@ const files = await db.getProjectFiles('my-app');
 const fileProjects = await db.getFileProjects('src/main.ts');
 
 // Clean up
-db.close();
+await db.close(); // returns a Promise that resolves when DB is fully closed
 ```
 
 ### CLI Usage
