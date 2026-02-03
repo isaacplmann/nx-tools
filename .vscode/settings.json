@@ -3,6 +3,7 @@
     "json"
   ],
   "chat.tools.terminal.autoApprove": {
-    "npx nx": true
+    "npx nx": true,
+    "nx": true
   }
 }
