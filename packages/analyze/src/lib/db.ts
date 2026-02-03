@@ -550,7 +550,7 @@ export class ProjectDatabase {
         path.join(workspaceRoot, 'tsconfig.json');
       const configHost: ts.ParseConfigFileHost = {
         ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: () => {},
+        onUnRecoverableConfigFileDiagnostic: () => { /** intentionally empty */},
       };
       const parsed = ts.getParsedCommandLineOfConfigFile(
         configFilePath,
@@ -727,7 +727,7 @@ export class ProjectDatabase {
         path.join(root, 'tsconfig.json');
       const configHost: ts.ParseConfigFileHost = {
         ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: () => {},
+        onUnRecoverableConfigFileDiagnostic: () => { /** intentionally empty */},
       };
       const parsedConfig = ts.getParsedCommandLineOfConfigFile(
         configFilePath,
@@ -807,7 +807,7 @@ export class ProjectDatabase {
             stmt.run([r.filePath, r.dependsOn, r.defined_in_file], (err: Error | null) => {
               if (err) {
                 // Ensure stmt finalized and propagate error
-                stmt.finalize(() => {});
+                stmt.finalize();
                 reject(err);
                 return;
               }

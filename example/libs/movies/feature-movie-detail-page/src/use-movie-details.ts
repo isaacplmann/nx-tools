@@ -21,7 +21,7 @@ export default function useMovieDetails() {
           throw new Error('Movie not found'); // Or a more descriptive error
         }
 
-        const data = await response.json();
+        const data = await response.json() as Movie;
         setMovie(data);
       } catch (err: unknown) {
         setError((err as Error).message);

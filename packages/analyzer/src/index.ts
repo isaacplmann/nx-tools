@@ -1,16 +1,8 @@
-import {
-  CreateDependencies,
-  CreateNodesV2,
-  createNodesFromFiles,
-  DependencyType,
-  validateDependency,
-} from '@nx/devkit';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { CreateDependencies } from '@nx/devkit';
 
 export const createDependencies: CreateDependencies = (opts, ctx) => {
-  const packageJsonProjectMap = new Map();
-  const nxProjects = Object.values(ctx.projects);
+  // const packageJsonProjectMap = new Map();
+  // const nxProjects = Object.values(ctx.projects);
   console.log(
     JSON.stringify(
       ctx.fileMap.projectFileMap['movies-feature-detail-page'],

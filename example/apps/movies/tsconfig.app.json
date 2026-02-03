@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "../../dist/out-tsc",
+    "outDir": "../../../dist/out-tsc",
     "types": [
       "node",
       "@nx/react/typings/cssmodule.d.ts",
@@ -22,10 +22,10 @@
   "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"],
   "references": [
     {
-      "path": "../../libs/shared/models"
+      "path": "../../libs/shared/models/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/shared/auth/feature-guarded-route"
+      "path": "../../libs/shared/auth/feature-guarded-route/tsconfig.lib.json"
     },
     {
       "path": "../../libs/movies/feature-movie-detail-page/tsconfig.lib.json"
@@ -43,7 +43,7 @@
       "path": "../../libs/movies/data-access/tsconfig.lib.json"
     },
     {
-      "path": "../../libs/shared/auth/data-access"
+      "path": "../../libs/shared/auth/data-access/tsconfig.lib.json"
     },
     {
       "path": "../../libs/movies/ui/tsconfig.lib.json"

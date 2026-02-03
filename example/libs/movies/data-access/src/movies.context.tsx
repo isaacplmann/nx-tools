@@ -19,7 +19,7 @@ export function MovieProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const fetchMovies = async () => {
       const response = await fetch(`${API_URL}/movie`);
-      const data = await response.json();
+      const data = await response.json() as unknown as Movie[];
       setMovies(data);
     };
     const fetchFavorites = async () => {

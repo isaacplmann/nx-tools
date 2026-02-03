@@ -154,7 +154,7 @@ describe('ProjectDatabase', () => {
 
   describe('File operations', () => {
     beforeEach(async () => {
-      await pdb.deleteProject('file-test-proj').catch(() => {});
+      await pdb.deleteProject('file-test-proj');
       await pdb.createProject('file-test-proj', 'for file tests');
     });
 

@@ -41,6 +41,18 @@
     },
     {
       "path": "./packages/analyzer-e2e"
+    },
+    {
+      "path": "./example/libs/shared/auth/ui-not-authenticated-page"
+    },
+    {
+      "path": "./example/libs/shared/auth/data-access"
+    },
+    {
+      "path": "./example/libs/shared/models"
+    },
+    {
+      "path": "./example/libs/shared/auth/feature-guarded-route"
     }
   ]
 }

@@ -174,7 +174,7 @@ function ResponsiveAppBar() {
                 color="primary"
                 name="search"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event: any) => setSearch(event.target.value)}
               />
             </form>
           </Box>

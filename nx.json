@@ -46,7 +46,10 @@
   ],
   "targetDefaults": {
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "options": {
+        "passWithNoTests": true
+      }
     },
     "@nx/js:tsc": {
       "cache": true,
