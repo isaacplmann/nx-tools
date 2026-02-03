@@ -17,48 +17,14 @@ import type {
   ProjectGraphProjectNode,
 } from '@nx/devkit';
 import ts from 'typescript';
-
-export interface Project {
-  id?: number;
-  name: string;
-  description?: string;
-  project_type?: string;
-  source_root?: string;
-  root?: string;
-  tags?: string;
-  created_at?: string;
-}
-
-export interface ProjectFile {
-  id?: number;
-  project_id: number;
-  file_path: string;
-  file_type?: string;
-  added_at?: string;
-}
-
-export interface GitCommit {
-  id?: number;
-  hash: string;
-  author: string;
-  date: string;
-  message: string;
-  created_at?: string;
-}
-
-export interface TouchedFile {
-  id?: number;
-  commit_id: number;
-  file_path: string;
-  change_type: string; // A (added), M (modified), D (deleted), R (renamed)
-  created_at?: string;
-}
-
-export interface SymbolDefinition {
-  symbol: string;
-  defined_in_project: string;
-  defined_in_file?: string;
-}
+import {
+  Project,
+  ProjectFile,
+  SymbolDefinition,
+  GitCommit,
+  TouchedFile,
+  FileDependency,
+} from './types.js';
 
 export class ProjectDatabase {
   private db: InstanceType<Sqlite3Module['Database']>;
@@ -136,6 +102,18 @@ export class ProjectDatabase {
       this.db.run(createCommitsTable);
       this.db.run(createTouchedFilesTable);
       this.db.run(createFileDepsTable);
+    });
+  }
+
+  private query<T>(sql: string, params: any[] = []): Promise<T[]> {
+    return new Promise((resolve, reject) => {
+      this.db.all(sql, params, (err: Error | null, rows: any[]) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(rows);
+        }
+      });
     });
   }
 
@@ -315,18 +293,7 @@ export class ProjectDatabase {
   }
 
   async getAllProjects(): Promise<Project[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM projects ORDER BY name',
-        (err: Error | null, rows: unknown[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as Project[]);
-          }
-        }
-      );
-    });
+    return this.query<Project>('SELECT * FROM projects ORDER BY name');
   }
 
   async deleteProject(name: string): Promise<boolean> {
@@ -346,35 +313,17 @@ export class ProjectDatabase {
   }
 
   async getProjectsByType(projectType: string): Promise<Project[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM projects WHERE project_type = ? ORDER BY name',
-        [projectType],
-        (err: Error | null, rows: unknown[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as Project[]);
-          }
-        }
-      );
-    });
+    return this.query<Project>(
+      'SELECT * FROM projects WHERE project_type = ? ORDER BY name',
+      [projectType]
+    );
   }
 
   async getProjectsByTag(tag: string): Promise<Project[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM projects WHERE tags LIKE ? ORDER BY name',
-        [`%${tag}%`],
-        (err: Error | null, rows: unknown[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as Project[]);
-          }
-        }
-      );
-    });
+    return this.query<Project>(
+      'SELECT * FROM projects WHERE tags LIKE ? ORDER BY name',
+      [`%${tag}%`]
+    );
   }
 
   // File methods
@@ -433,37 +382,22 @@ export class ProjectDatabase {
       return [];
     }
 
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM project_files WHERE project_id = ? ORDER BY file_path',
-        [project.id],
-        (err: Error | null, rows: unknown[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as ProjectFile[]);
-          }
-        }
-      );
-    });
+    return this.query<ProjectFile>(
+      'SELECT * FROM project_files WHERE project_id = ? ORDER BY file_path',
+      [project.id]
+    );
   }
 
   async getFileProjects(filePath: string): Promise<Project[]> {
-    return new Promise((resolve, reject) => {
-      const query = `
+    return this.query<Project>(
+      `
         SELECT p.* FROM projects p
         JOIN project_files pf ON p.id = pf.project_id
         WHERE pf.file_path = ?
         ORDER BY p.name
-      `;
-      this.db.all(query, [filePath], (err: Error | null, rows: unknown[]) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as Project[]);
-        }
-      });
-    });
+      `,
+      [filePath]
+    );
   }
 
   // Nx-specific query methods
@@ -550,7 +484,9 @@ export class ProjectDatabase {
         path.join(workspaceRoot, 'tsconfig.json');
       const configHost: ts.ParseConfigFileHost = {
         ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: () => { /** intentionally empty */},
+        onUnRecoverableConfigFileDiagnostic: () => {
+          /** intentionally empty */
+        },
       };
       const parsed = ts.getParsedCommandLineOfConfigFile(
         configFilePath,
@@ -580,7 +516,9 @@ export class ProjectDatabase {
           ) {
             // Handle Named Imports: import { useState, useEffect } from 'react'
             importClause.namedBindings.elements.forEach((namedImport) => {
-              const symbol = localChecker!.getSymbolAtLocation(namedImport.name);
+              const symbol = localChecker!.getSymbolAtLocation(
+                namedImport.name
+              );
               let defined_in_file: string | undefined = undefined;
               if (symbol) {
                 // Follow the import chain to the original definition
@@ -640,29 +578,17 @@ export class ProjectDatabase {
   }
 
   async getFileDependencies(filePath: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT depends_on_project FROM file_dependencies WHERE file_path = ? ORDER BY depends_on_project',
-        [filePath],
-        (err: Error | null, rows: Array<{ depends_on_project: string }>) => {
-          if (err) reject(err);
-          else resolve(rows.map((r) => r.depends_on_project));
-        }
-      );
-    });
+    return this.query<FileDependency>(
+      'SELECT depends_on_project FROM file_dependencies WHERE file_path = ? ORDER BY depends_on_project',
+      [filePath]
+    ).then((rows) => rows.map((r) => r.depends_on_project));
   }
 
   async getFileDependents(dependsOn: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT file_path FROM file_dependencies WHERE depends_on_project = ? ORDER BY file_path',
-        [dependsOn],
-        (err: Error | null, rows: Array<{ file_path: string }>) => {
-          if (err) reject(err);
-          else resolve(rows.map((r) => r.file_path));
-        }
-      );
-    });
+    return this.query<FileDependency>(
+      'SELECT file_path FROM file_dependencies WHERE depends_on_project = ? ORDER BY file_path',
+      [dependsOn]
+    ).then((rows) => rows.map((r) => r.file_path));
   }
 
   async syncFileDependenciesFromNx(workspaceRoot?: string): Promise<number> {
@@ -709,7 +635,7 @@ export class ProjectDatabase {
     const allEntries: Array<{ file: string; deps?: unknown }> = [];
     for (const entry of nonProjectFiles) allEntries.push(entry);
     for (const files of Object.values(projectFileMap)) {
-      for (const entry of (files as any)) allEntries.push(entry);
+      for (const entry of files as any) allEntries.push(entry);
     }
 
     // Build absolute file list for TS program
@@ -727,7 +653,9 @@ export class ProjectDatabase {
         path.join(root, 'tsconfig.json');
       const configHost: ts.ParseConfigFileHost = {
         ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: () => { /** intentionally empty */},
+        onUnRecoverableConfigFileDiagnostic: () => {
+          /** intentionally empty */
+        },
       };
       const parsedConfig = ts.getParsedCommandLineOfConfigFile(
         configFilePath,
@@ -760,7 +688,11 @@ export class ProjectDatabase {
       for (const dep of deps) {
         let depStr: string | undefined;
         if (typeof dep === 'string') depStr = dep;
-        else if (Array.isArray(dep) && dep.length > 0 && typeof dep[0] === 'string')
+        else if (
+          Array.isArray(dep) &&
+          dep.length > 0 &&
+          typeof dep[0] === 'string'
+        )
           depStr = dep[0] as string;
         if (!depStr) continue;
         if (depStr.startsWith('npm:') || depStr === 'dynamic') continue;
@@ -804,25 +736,28 @@ export class ProjectDatabase {
           let pending = records.length;
 
           for (const r of records) {
-            stmt.run([r.filePath, r.dependsOn, r.defined_in_file], (err: Error | null) => {
-              if (err) {
-                // Ensure stmt finalized and propagate error
-                stmt.finalize();
-                reject(err);
-                return;
-              }
+            stmt.run(
+              [r.filePath, r.dependsOn, r.defined_in_file],
+              (err: Error | null) => {
+                if (err) {
+                  // Ensure stmt finalized and propagate error
+                  stmt.finalize();
+                  reject(err);
+                  return;
+                }
 
-              pending--;
-              if (pending === 0) {
-                stmt.finalize((err) => {
-                  if (err) return reject(err);
-                  this.db.run('COMMIT', (err) => {
+                pending--;
+                if (pending === 0) {
+                  stmt.finalize((err) => {
                     if (err) return reject(err);
-                    resolve();
+                    this.db.run('COMMIT', (err) => {
+                      if (err) return reject(err);
+                      resolve();
+                    });
                   });
-                });
+                }
               }
-            });
+            );
           }
 
           // Handle case where records.length === 0 handled above
@@ -966,72 +901,45 @@ export class ProjectDatabase {
   }
 
   async getCommits(limit = 50): Promise<GitCommit[]> {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM git_commits ORDER BY date DESC LIMIT ?',
-        [limit],
-        (err, rows) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows as GitCommit[]);
-          }
-        }
-      );
-    });
+    return this.query<GitCommit>(
+      'SELECT * FROM git_commits ORDER BY date DESC LIMIT ?',
+      [limit]
+    );
   }
 
   async getTouchedFiles(commitHash?: string): Promise<TouchedFile[]> {
-    return new Promise((resolve, reject) => {
-      let query = `
-        SELECT tf.*, gc.hash, gc.author, gc.date, gc.message 
-        FROM touched_files tf
-        JOIN git_commits gc ON tf.commit_id = gc.id
-      `;
-      const params: string[] = [];
+    let query = `
+      SELECT tf.*, gc.hash, gc.author, gc.date, gc.message 
+      FROM touched_files tf
+      JOIN git_commits gc ON tf.commit_id = gc.id
+    `;
+    const params: string[] = [];
 
-      if (commitHash) {
-        query += ' WHERE gc.hash = ?';
-        params.push(commitHash);
-      }
+    if (commitHash) {
+      query += ' WHERE gc.hash = ?';
+      params.push(commitHash);
+    }
 
-      query += ' ORDER BY gc.date DESC, tf.file_path';
+    query += ' ORDER BY gc.date DESC, tf.file_path';
 
-      this.db.all(query, params, (err, rows) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows as TouchedFile[]);
-        }
-      });
-    });
+    return this.query<TouchedFile>(query, params);
   }
 
   async getFilesTouchedInLastCommits(commitCount = 100): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-      const query = `
-        SELECT DISTINCT tf.file_path 
-        FROM touched_files tf
-        WHERE tf.commit_id IN (
-          SELECT id FROM git_commits 
-          ORDER BY date DESC 
-          LIMIT ?
-        )
-        ORDER BY tf.file_path
-      `;
+    const query = `
+      SELECT DISTINCT tf.file_path 
+      FROM touched_files tf
+      WHERE tf.commit_id IN (
+        SELECT id FROM git_commits 
+        ORDER BY date DESC 
+        LIMIT ?
+      )
+      ORDER BY tf.file_path
+    `;
 
-      this.db.all(
-        query,
-        [commitCount],
-        (err, rows: { file_path: string }[]) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(rows.map((row) => row.file_path));
-          }
-        }
-      );
-    });
+    return this.query<TouchedFile>(query, [commitCount]).then((rows) =>
+      rows.map((row) => row.file_path)
+    );
   }
 
   async getProjectsTouchedByCommits(commitCount = 100): Promise<string[]> {

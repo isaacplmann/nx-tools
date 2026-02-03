@@ -1,4 +1,5 @@
-import { ProjectDatabase, Project, ProjectFile } from './db.js';
+import { ProjectDatabase } from './db.js';
+import { Project, ProjectFile } from './types.js';
 
 async function example() {
   // Create a new database instance
