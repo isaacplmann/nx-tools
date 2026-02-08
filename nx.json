@@ -61,7 +61,7 @@
     }
   },
   "release": {
-    "projects": ["packages/*"],
+    "projects": ["packages/analyze"],
     "projectsRelationship": "fixed",
     "version": {
       "preVersionCommand": "npx nx run-many -t build",

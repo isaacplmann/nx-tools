@@ -31,6 +31,16 @@
     "access": "public"
   },
   "nx": {
-    "name": "@nx-tools/analyze"
+    "name": "@nx-tools/analyze",
+    "targets": {
+      "start": {
+        "executor": "nx:run-commands",
+        "dependsOn": ["build"],
+        "options": {
+          "cwd": "{workspaceRoot}",
+          "command": "node ./packages/analyze/dist/cli.js"
+        }
+      }
+    }
   }
 }
