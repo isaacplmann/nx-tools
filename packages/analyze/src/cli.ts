@@ -3,6 +3,7 @@
 import { ProjectDatabase } from './lib/db.js';
 import * as process from 'process';
 import * as path from 'path';
+import generateArchitectureDiagram from './lib/view.js';
 
 export async function runCLI(
   args: string[],
@@ -25,6 +26,8 @@ Commands:
   find-projects <filepath>               Find projects containing file
   dependencies <project>                 Show project dependencies
   dependents <project>                   Show projects that depend on this project
+
+  view                                   Launch a web-based viewer for the database
 
   Git Commands:
   sync-git [commit-count]                Sync git commits and touched files (default: 100 commits)
@@ -59,6 +62,11 @@ Examples:
 
   try {
     switch (command) {
+      case 'view': {
+        logger.log(await generateArchitectureDiagram(dbPath));
+        break;
+      }
+
       case 'sync-nx': {
         const [workspaceRoot] = args.slice(1);
         logger.log('Syncing Nx workspace to database...');
