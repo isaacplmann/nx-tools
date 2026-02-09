@@ -1066,20 +1066,24 @@ export class ProjectDatabase {
         JOIN project_files pf ON pf.project_id = p.id
         JOIN touched_files tf ON tf.file_path = pf.file_path
         WHERE tf.commit_id IN (SELECT id FROM touched_commits)
+      ),
+      recursive_dependents AS (
+        -- Base case: directly touched projects
+        SELECT name FROM directly_touched_projects
+        
+        UNION ALL
+        
+        -- Recursive case: projects that depend on already-found projects
+        SELECT DISTINCT pd.source_project
+        FROM project_dependencies pd
+        INNER JOIN recursive_dependents rd ON pd.target_project = rd.name
       )
       SELECT p.name, COUNT(DISTINCT tf.commit_id) as affected_count
       FROM projects p
       JOIN project_files pf ON pf.project_id = p.id
       JOIN touched_files tf ON tf.file_path = pf.file_path
       WHERE tf.commit_id IN (SELECT id FROM touched_commits)
-      AND (
-        p.name IN (SELECT name FROM directly_touched_projects)
-        OR p.name IN (
-          SELECT pd.source_project
-          FROM project_dependencies pd
-          WHERE pd.target_project IN (SELECT name FROM directly_touched_projects)
-        )
-      )
+      AND p.name IN (SELECT name FROM recursive_dependents)
       GROUP BY p.name
       ORDER BY affected_count DESC
     `;
