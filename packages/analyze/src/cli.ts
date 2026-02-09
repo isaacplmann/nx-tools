@@ -9,7 +9,11 @@ export async function runCLI(
   args: string[],
   opts?: {
     dbPath?: string;
-    logger?: { log: (...a: any[]) => void; error: (...a: any[]) => void };
+    logger?: {
+      log: (...a: any[]) => void;
+      table: (...a: any[]) => void;
+      error: (...a: any[]) => void;
+    };
   }
 ): Promise<number> {
   const logger = opts?.logger ?? console;
@@ -67,21 +71,44 @@ Examples:
         break;
       }
 
+      case 'sync': {
+        logger.log('Syncing Nx workspace to database...');
+        const projectGraph = await db.syncWithNxWorkspace();
+        logger.log(
+          `Successfully synced ${
+            Object.keys(projectGraph.nodes).length
+          } projects`
+        );
+        const deps = await db.syncAllProjectDependencies();
+        logger.log(`Successfully synced ${deps.length} project dependencies`);
+        const fileDeps = await db.syncFileDependenciesFromNx();
+        logger.log(`Successfully synced ${fileDeps} file dependencies`);
+
+        const [commitCountStr] = args.slice(1);
+        const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
+        if (isNaN(commitCount) || commitCount <= 0) {
+          logger.error('Commit count must be a positive number');
+          return 1;
+        }
+        logger.log(`Syncing last ${commitCount} git commits...`);
+        await db.syncGitCommits(commitCount);
+        logger.log('Git sync completed successfully');
+        break;
+      }
+
       case 'sync-nx': {
         const [workspaceRoot] = args.slice(1);
         logger.log('Syncing Nx workspace to database...');
         const projectGraph = await db.syncWithNxWorkspace(workspaceRoot);
         logger.log(
-          `Successfully synced ${Object.keys(projectGraph.nodes).length} projects`
+          `Successfully synced ${
+            Object.keys(projectGraph.nodes).length
+          } projects`
         );
         const deps = await db.syncAllProjectDependencies();
-        logger.log(
-          `Successfully synced ${deps.length} project dependencies`
-        );
+        logger.log(`Successfully synced ${deps.length} project dependencies`);
         const fileDeps = await db.syncFileDependenciesFromNx(workspaceRoot);
-        logger.log(
-          `Successfully synced ${fileDeps} file dependencies`
-        );
+        logger.log(`Successfully synced ${fileDeps} file dependencies`);
         break;
       }
 
@@ -98,19 +125,52 @@ Examples:
 
       case 'list-projects': {
         const projects = await db.getAllProjects();
+        const touchedCounts = await db.getAllProjectsTouchedCount();
+        const loads = await db.getAllProjectsLoad();
+        const affectedCounts = await db.getAllProjectsAffectedCount();
+
         if (projects.length === 0) {
           logger.log('No projects found');
         } else {
           logger.log('Projects:');
+
+          const sortedProjects = projects
+            .map((project) => ({
+              ...project,
+              touchedCount:
+                touchedCounts.find((p) => p.name === project.name)
+                  ?.touch_count || 0,
+              load: loads.find((p) => p.name === project.name)?.load || 0,
+              affectedCount:
+                affectedCounts.find((p) => p.name === project.name)
+                  ?.affected_count || 0,
+            }))
+            .sort((a, b) => b.load - a.load);
+          logger.table(sortedProjects, [
+            'name',
+            'touchedCount',
+            'load',
+            'affectedCount',
+          ]);
+        }
+        break;
+      }
+
+      case 'list-projects-load': {
+        const projects = await db.getAllProjectsLoad();
+        if (projects.length === 0) {
+          logger.log('No projects found');
+        } else {
+          logger.log('Projects load:');
           projects.forEach((project) => {
-            logger.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''}`);
+            logger.log(`  ${project.name} - ${project.load}`);
           });
         }
         break;
       }
 
       case 'list-projects-touched': {
-        const projects = await db.getAllProjectsTouchCount();
+        const projects = await db.getAllProjectsTouchedCount();
         if (projects.length === 0) {
           logger.log('No projects found');
         } else {
@@ -162,7 +222,11 @@ Examples:
         } else {
           logger.log(`Files in project "${projectName}":`);
           files.forEach((file) => {
-            logger.log(`  ${file.file_path}${file.file_type ? ` (${file.file_type})` : ''}`);
+            logger.log(
+              `  ${file.file_path}${
+                file.file_type ? ` (${file.file_type})` : ''
+              }`
+            );
           });
         }
         break;
@@ -270,10 +334,17 @@ Examples:
         }
         try {
           // fileType may be a short string like 'ts' - convert to array to match API
-          await db.addFileToProject(projectName, filePath, fileType ? [fileType] : undefined);
+          await db.addFileToProject(
+            projectName,
+            filePath,
+            fileType ? [fileType] : undefined
+          );
           logger.log(`Added "${filePath}" to project "${projectName}"`);
         } catch (error) {
-          logger.error('Error:', error instanceof Error ? error.message : error);
+          logger.error(
+            'Error:',
+            error instanceof Error ? error.message : error
+          );
           return 1;
         }
         break;
@@ -290,10 +361,15 @@ Examples:
           if (removed) {
             logger.log(`Removed "${filePath}" from project "${projectName}"`);
           } else {
-            logger.log(`File "${filePath}" not found in project "${projectName}"`);
+            logger.log(
+              `File "${filePath}" not found in project "${projectName}"`
+            );
           }
         } catch (error) {
-          logger.error('Error:', error instanceof Error ? error.message : error);
+          logger.error(
+            'Error:',
+            error instanceof Error ? error.message : error
+          );
           return 1;
         }
         break;
@@ -338,7 +414,7 @@ Examples:
           logger.error('Commit count must be a positive number');
           return 1;
         }
-        const projects = await db.getAllProjectsTouchCount(commitCount);
+        const projects = await db.getAllProjectsTouchedCount(commitCount);
         if (projects.length === 0) {
           logger.log('No projects affected');
         } else {
@@ -358,7 +434,9 @@ Examples:
         if (affectedProjects.length === 0) {
           logger.log('No projects are affected by the changed files');
         } else {
-          logger.log(`Projects affected by changes to: ${changedFiles.join(', ')}`);
+          logger.log(
+            `Projects affected by changes to: ${changedFiles.join(', ')}`
+          );
           affectedProjects.forEach((project) => {
             logger.log(`  ${project}`);
           });
@@ -397,7 +475,9 @@ Examples:
               commit.message.length > 60
                 ? commit.message.substring(0, 60) + '...'
                 : commit.message;
-            logger.log(`  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`);
+            logger.log(
+              `  ${shortHash} - ${commit.author} (${commit.date}) - ${shortMessage}`
+            );
           });
         }
         break;
@@ -430,11 +510,17 @@ Examples:
           logger.error('Commit count must be a positive number');
           return 1;
         }
-        const touchedProjects = await db.getAllProjectsTouchCount(commitCount);
+        const touchedProjects = await db.getAllProjectsTouchedCount(
+          commitCount
+        );
         if (touchedProjects.length === 0) {
-          logger.log(`No projects touched by changes in last ${commitCount} commits`);
+          logger.log(
+            `No projects touched by changes in last ${commitCount} commits`
+          );
         } else {
-          logger.log(`Projects touched by changes in last ${commitCount} commits:`);
+          logger.log(
+            `Projects touched by changes in last ${commitCount} commits:`
+          );
           touchedProjects.forEach((project) => {
             logger.log(`  ${project}`);
           });

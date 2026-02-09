@@ -1029,7 +1029,20 @@ export class ProjectDatabase {
     );
   }
 
-  async getAllProjectsTouchCount(
+  async getAllProjectsLoad(
+    commitCount = 100
+  ): Promise<{ name: string; load: number }[]> {
+    const touchCount = await this.getAllProjectsTouchedCount(commitCount);
+    return Promise.all(
+      touchCount.map(async (p) => {
+        const dependentsCount = (await this.getProjectDependents(p.name))
+          .length;
+        return { name: p.name, load: p.touch_count * dependentsCount };
+      })
+    ).then((projects) => projects.sort((a, b) => b.load - a.load));
+  }
+
+  async getAllProjectsTouchedCount(
     commitCount = 100
   ): Promise<{ name: string; touch_count: number }[]> {
     const query = `
@@ -1077,14 +1090,27 @@ export class ProjectDatabase {
         SELECT DISTINCT pd.source_project
         FROM project_dependencies pd
         INNER JOIN recursive_dependents rd ON pd.target_project = rd.name
+      ),
+      project_deps_transitive AS (
+        -- Base case: direct dependencies
+        SELECT source_project, target_project FROM project_dependencies
+        
+        UNION ALL
+        
+        -- Recursive case: transitive dependencies
+        SELECT pdt.source_project, pd.target_project
+        FROM project_deps_transitive pdt
+        JOIN project_dependencies pd ON pdt.target_project = pd.source_project
       )
-      SELECT p.name, COUNT(DISTINCT tf.commit_id) as affected_count
-      FROM projects p
-      JOIN project_files pf ON pf.project_id = p.id
-      JOIN touched_files tf ON tf.file_path = pf.file_path
-      WHERE tf.commit_id IN (SELECT id FROM touched_commits)
-      AND p.name IN (SELECT name FROM recursive_dependents)
-      GROUP BY p.name
+      SELECT rd.name, COUNT(DISTINCT tf.commit_id) as affected_count
+      FROM recursive_dependents rd
+      LEFT JOIN project_deps_transitive pdt ON pdt.source_project = rd.name
+      LEFT JOIN directly_touched_projects dtp ON pdt.target_project = dtp.name OR rd.name = dtp.name
+      LEFT JOIN projects p ON p.name = dtp.name
+      LEFT JOIN project_files pf ON pf.project_id = p.id
+      LEFT JOIN touched_files tf ON tf.file_path = pf.file_path AND tf.commit_id IN (SELECT id FROM touched_commits)
+      WHERE dtp.name IS NOT NULL
+      GROUP BY rd.name
       ORDER BY affected_count DESC
     `;
 
