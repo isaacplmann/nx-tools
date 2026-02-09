@@ -96,12 +96,23 @@ export class ProjectDatabase {
       )
     `;
 
+    const createProjectDepsTable = `
+      CREATE TABLE IF NOT EXISTS project_dependencies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_project TEXT NOT NULL,
+        target_project TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source_project, target_project)
+      )
+    `;
+
     this.db.serialize(() => {
       this.db.run(createProjectsTable);
       this.db.run(createFilesTable);
       this.db.run(createCommitsTable);
       this.db.run(createTouchedFilesTable);
       this.db.run(createFileDepsTable);
+      this.db.run(createProjectDepsTable);
     });
   }
 
@@ -401,6 +412,82 @@ export class ProjectDatabase {
   }
 
   // Nx-specific query methods
+  async syncAllProjectDependencies(): Promise<
+    { source: string; target: string }[]
+  > {
+    try {
+      const projectGraph = await createProjectGraphAsync({
+        exitOnError: false,
+      });
+      const dependencies: { source: string; target: string }[] = [];
+      for (const [projectName, deps] of Object.entries(
+        projectGraph.dependencies
+      )) {
+        dependencies.push(
+          ...deps
+            .filter((dep) => !dep.target.startsWith('npm:')) // Exclude external dependencies
+            .map((dep) => ({ source: projectName, target: dep.target }))
+        );
+      }
+
+      // Persist dependencies to the database (replace existing)
+      await new Promise<void>((resolve, reject) => {
+        this.db.serialize(() => {
+          this.db.run('BEGIN TRANSACTION', (err: Error | null) => {
+            if (err) return reject(err);
+
+            this.db.run(
+              'DELETE FROM project_dependencies',
+              (delErr: Error | null) => {
+                if (delErr) return reject(delErr);
+
+                const stmt = this.db.prepare(
+                  'INSERT OR IGNORE INTO project_dependencies (source_project, target_project) VALUES (?, ?)'
+                );
+
+                if (dependencies.length === 0) {
+                  stmt.finalize((finalizeErr) => {
+                    if (finalizeErr) return reject(finalizeErr);
+                    this.db.run('COMMIT', (commitErr: Error | null) => {
+                      if (commitErr) return reject(commitErr);
+                      resolve();
+                    });
+                  });
+                  return;
+                }
+
+                let pending = dependencies.length;
+                for (const d of dependencies) {
+                  stmt.run([d.source, d.target], (runErr: Error | null) => {
+                    if (runErr) {
+                      stmt.finalize();
+                      return reject(runErr);
+                    }
+                    pending--;
+                    if (pending === 0) {
+                      stmt.finalize((finalizeErr) => {
+                        if (finalizeErr) return reject(finalizeErr);
+                        this.db.run('COMMIT', (commitErr: Error | null) => {
+                          if (commitErr) return reject(commitErr);
+                          resolve();
+                        });
+                      });
+                    }
+                  });
+                }
+              }
+            );
+          });
+        });
+      });
+
+      return dependencies;
+    } catch (error) {
+      console.warn(`Could not sync dependencies:`, error);
+      return [];
+    }
+  }
+
   async getProjectDependencies(projectName: string): Promise<string[]> {
     try {
       const projectGraph = await createProjectGraphAsync({
@@ -942,23 +1029,64 @@ export class ProjectDatabase {
     );
   }
 
-  async getProjectsTouchedByCommits(commitCount = 100): Promise<string[]> {
-    try {
-      const touchedFiles = await this.getFilesTouchedInLastCommits(commitCount);
-      const touchedProjects = new Set<string>();
+  async getAllProjectsTouchCount(
+    commitCount = 100
+  ): Promise<{ name: string; touch_count: number }[]> {
+    const query = `
+      SELECT p.name, COUNT(DISTINCT tf.commit_id) as touch_count
+      FROM projects p
+      JOIN project_files pf ON pf.project_id = p.id
+      JOIN touched_files tf ON tf.file_path = pf.file_path
+      WHERE tf.commit_id IN (
+        SELECT id FROM git_commits
+        ORDER BY date DESC
+        LIMIT ?
+      )
+      GROUP BY p.name
+      ORDER BY touch_count DESC
+    `;
 
-      for (const filePath of touchedFiles) {
-        const projects = await this.getFileProjects(filePath);
-        for (const project of projects) {
-          touchedProjects.add(project.name);
-        }
-      }
+    return this.query<{ name: string; touch_count: number }>(query, [
+      commitCount,
+    ]);
+  }
 
-      return Array.from(touchedProjects);
-    } catch (error) {
-      console.warn('Could not determine projects touched by commits:', error);
-      return [];
-    }
+  async getAllProjectsAffectedCount(
+    commitCount = 100
+  ): Promise<{ name: string; affected_count: number }[]> {
+    const query = `
+      WITH touched_commits AS (
+        SELECT id FROM git_commits
+        ORDER BY date DESC
+        LIMIT ?
+      ),
+      directly_touched_projects AS (
+        SELECT DISTINCT p.name
+        FROM projects p
+        JOIN project_files pf ON pf.project_id = p.id
+        JOIN touched_files tf ON tf.file_path = pf.file_path
+        WHERE tf.commit_id IN (SELECT id FROM touched_commits)
+      )
+      SELECT p.name, COUNT(DISTINCT tf.commit_id) as affected_count
+      FROM projects p
+      JOIN project_files pf ON pf.project_id = p.id
+      JOIN touched_files tf ON tf.file_path = pf.file_path
+      WHERE tf.commit_id IN (SELECT id FROM touched_commits)
+      AND (
+        p.name IN (SELECT name FROM directly_touched_projects)
+        OR p.name IN (
+          SELECT pd.source_project
+          FROM project_dependencies pd
+          WHERE pd.target_project IN (SELECT name FROM directly_touched_projects)
+        )
+      )
+      GROUP BY p.name
+      ORDER BY affected_count DESC
+    `;
+
+    return this.query<{ name: string; affected_count: number }>(query, [
+      commitCount,
+    ]);
   }
 
   async close(): Promise<void> {

@@ -74,6 +74,14 @@ Examples:
         logger.log(
           `Successfully synced ${Object.keys(projectGraph.nodes).length} projects`
         );
+        const deps = await db.syncAllProjectDependencies();
+        logger.log(
+          `Successfully synced ${deps.length} project dependencies`
+        );
+        const fileDeps = await db.syncFileDependenciesFromNx(workspaceRoot);
+        logger.log(
+          `Successfully synced ${fileDeps} file dependencies`
+        );
         break;
       }
 
@@ -96,6 +104,32 @@ Examples:
           logger.log('Projects:');
           projects.forEach((project) => {
             logger.log(`  ${project.name}${project.description ? ` - ${project.description}` : ''}`);
+          });
+        }
+        break;
+      }
+
+      case 'list-projects-touched': {
+        const projects = await db.getAllProjectsTouchCount();
+        if (projects.length === 0) {
+          logger.log('No projects found');
+        } else {
+          logger.log('Projects touched count:');
+          projects.forEach((project) => {
+            logger.log(`  ${project.name} - ${project.touch_count}`);
+          });
+        }
+        break;
+      }
+
+      case 'list-projects-affected': {
+        const projects = await db.getAllProjectsAffectedCount();
+        if (projects.length === 0) {
+          logger.log('No projects found');
+        } else {
+          logger.log('Projects affected count:');
+          projects.forEach((project) => {
+            logger.log(`  ${project.name} - ${project.affected_count}`);
           });
         }
         break;
@@ -304,7 +338,7 @@ Examples:
           logger.error('Commit count must be a positive number');
           return 1;
         }
-        const projects = await db.getProjectsTouchedByCommits(commitCount);
+        const projects = await db.getAllProjectsTouchCount(commitCount);
         if (projects.length === 0) {
           logger.log('No projects affected');
         } else {
@@ -396,7 +430,7 @@ Examples:
           logger.error('Commit count must be a positive number');
           return 1;
         }
-        const touchedProjects = await db.getProjectsTouchedByCommits(commitCount);
+        const touchedProjects = await db.getAllProjectsTouchCount(commitCount);
         if (touchedProjects.length === 0) {
           logger.log(`No projects touched by changes in last ${commitCount} commits`);
         } else {
