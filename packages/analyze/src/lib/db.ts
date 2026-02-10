@@ -24,6 +24,7 @@ import {
   GitCommit,
   TouchedFile,
   FileDependency,
+  ProjectMetrics,
 } from './types.js';
 
 export class ProjectDatabase {
@@ -490,11 +491,32 @@ export class ProjectDatabase {
 
   async getProjectDependencies(projectName: string): Promise<string[]> {
     try {
-      const projectGraph = await createProjectGraphAsync({
-        exitOnError: false,
-      });
-      const dependencies = projectGraph.dependencies[projectName] || [];
-      return dependencies.map((dep) => dep.target);
+      // Compute transitive dependencies from the project_dependencies table.
+      const result = new Set<string>();
+      const visited = new Set<string>();
+      const queue: string[] = [projectName];
+      visited.add(projectName);
+
+      while (queue.length > 0) {
+        // Process in small batches to avoid huge IN (...) lists
+        const batch = queue.splice(0, 50);
+        const placeholders = batch.map(() => '?').join(',');
+        const rows = await this.query<{ target_project: string }>(
+          `SELECT target_project FROM project_dependencies WHERE source_project IN (${placeholders})`,
+          batch as any
+        );
+
+        for (const r of rows) {
+          const t = r.target_project;
+          if (!visited.has(t)) {
+            visited.add(t);
+            result.add(t);
+            queue.push(t);
+          }
+        }
+      }
+
+      return Array.from(result);
     } catch (error) {
       console.warn(`Could not get dependencies for ${projectName}:`, error);
       return [];
@@ -503,18 +525,31 @@ export class ProjectDatabase {
 
   async getProjectDependents(projectName: string): Promise<string[]> {
     try {
-      const projectGraph = await createProjectGraphAsync({
-        exitOnError: false,
-      });
-      const dependents: string[] = [];
+      // Compute transitive dependents using the project_dependencies table.
+      const result = new Set<string>();
+      const visited = new Set<string>();
+      const queue: string[] = [projectName];
+      visited.add(projectName);
 
-      for (const [project, deps] of Object.entries(projectGraph.dependencies)) {
-        if (deps.some((dep) => dep.target === projectName)) {
-          dependents.push(project);
+      while (queue.length > 0) {
+        const batch = queue.splice(0, 50);
+        const placeholders = batch.map(() => '?').join(',');
+        const rows = await this.query<{ source_project: string }>(
+          `SELECT source_project FROM project_dependencies WHERE target_project IN (${placeholders})`,
+          batch as any
+        );
+
+        for (const r of rows) {
+          const s = r.source_project;
+          if (!visited.has(s)) {
+            visited.add(s);
+            result.add(s);
+            queue.push(s);
+          }
         }
       }
 
-      return dependents;
+      return Array.from(result);
     } catch (error) {
       console.warn(`Could not get dependents for ${projectName}:`, error);
       return [];
@@ -1101,43 +1136,145 @@ export class ProjectDatabase {
     }
 
     // Step 2: build dependents map
+    // Build the set of projects we need dependents for and compute touched map in one pass
     const projectsToCompute = new Set<string>();
     for (const r of touchedRows) projectsToCompute.add(r.project_name);
 
+    // Fetch dependents in parallel for better performance
     const transitiveDependents = new Map<string, string[]>();
-    for (const proj of projectsToCompute) {
-      transitiveDependents.set(proj, await this.getProjectDependencies(proj));
+    if (projectsToCompute.size > 0) {
+      const projectsArr = Array.from(projectsToCompute);
+      await Promise.all(
+        projectsArr.map((p) => this.getProjectDependents(p).then(deps => {
+          transitiveDependents.set(p, deps);
+          return deps;
+        }))
+      );
     }
 
-    // Step 3: for each commit, compute affected projects (touched + dependents)
+    // Compute affected counts by iterating commits once and adding touched + dependents
     const affectedCounts = new Map<string, number>();
-
-    for (const commitId of commitIds) {
-      const touched = touchedByCommit.get(commitId) || new Set<string>();
+    for (const [, touched] of touchedByCommit) {
       const affected = new Set<string>();
-
       for (const t of touched) {
         affected.add(t);
         const depsSet = transitiveDependents.get(t);
         if (depsSet) depsSet.forEach((p) => affected.add(p));
       }
 
-      // Step 4: increment counts for each affected project for this commit
       for (const proj of affected) {
         affectedCounts.set(proj, (affectedCounts.get(proj) || 0) + 1);
       }
     }
 
     // Ensure all projects are present (with zero) so result covers every project
-    const allProjects = await this.query<{ name: string }>('SELECT name FROM projects');
-    const result: { name: string; affected_count: number }[] = allProjects.map((p) => ({
-      name: p.name,
-      affected_count: affectedCounts.get(p.name) || 0,
-    }));
+    const allProjects = await this.query<{ name: string }>(
+      'SELECT name FROM projects'
+    );
+    const result: { name: string; affected_count: number }[] = allProjects.map(
+      (p) => ({
+        name: p.name,
+        affected_count: affectedCounts.get(p.name) || 0,
+      })
+    );
 
     // Sort by descending affected_count
     result.sort((a, b) => b.affected_count - a.affected_count);
     return result;
+  }
+
+  async getAllProjectsMetrics(commitCount = 100): Promise<ProjectMetrics[]> {
+    // Fetch all projects and recent commits in parallel
+    const [projects, commitRows] = await Promise.all([
+      this.getAllProjects(),
+      this.query<{ id: number }>(
+        'SELECT id FROM git_commits ORDER BY date DESC LIMIT ?',
+        [commitCount]
+      ),
+    ]);
+
+    const commitIds = commitRows.map((r) => r.id);
+
+    if (commitIds.length === 0) {
+      return projects.map((p) => ({
+        ...p,
+        touched_count: 0,
+        load: 0,
+        affected_count: 0,
+      }));
+    }
+
+    // Single query to get touched projects and file counts for all projects in one pass
+    const touchedRows = await this.query<{
+      commit_id: number;
+      project_name: string;
+      project_id: number;
+    }>(
+      `
+        SELECT DISTINCT tf.commit_id, p.name as project_name, p.id as project_id
+        FROM touched_files tf
+        JOIN project_files pf ON pf.file_path = tf.file_path
+        JOIN projects p ON p.id = pf.project_id
+        WHERE tf.commit_id IN (${commitIds.map(() => '?').join(',')})
+      `,
+      commitIds as any
+    );
+
+    // Build maps for touched counts and commit tracking
+    const touchedByCommit = new Map<number, Set<string>>();
+    const touchCountMap = new Map<string, number>();
+    const projectsToCompute = new Set<string>();
+
+    for (const r of touchedRows) {
+      // For affected counts
+      const s = touchedByCommit.get(r.commit_id) || new Set<string>();
+      s.add(r.project_name);
+      touchedByCommit.set(r.commit_id, s);
+
+      // For touched counts
+      touchCountMap.set(
+        r.project_name,
+        (touchCountMap.get(r.project_name) || 0) + 1
+      );
+      projectsToCompute.add(r.project_name);
+    }
+
+    // Build dependents map for load and affected calculations (parallel)
+    const transitiveDependents = new Map<string, string[]>();
+    if (projectsToCompute.size > 0) {
+      const projectsArr = Array.from(projectsToCompute);
+      await Promise.all(
+        projectsArr.map((p) => this.getProjectDependents(p).then(deps => {
+          transitiveDependents.set(p, deps);
+          return deps;
+        }))
+      );
+    }
+
+    // Calculate affected counts by iterating commits once
+    const affectedCounts = new Map<string, number>();
+    for (const [, touched] of touchedByCommit) {
+      const affected = new Set<string>();
+      for (const t of touched) {
+        affected.add(t);
+        const depsSet = transitiveDependents.get(t);
+        if (depsSet) depsSet.forEach((p) => affected.add(p));
+      }
+
+      for (const proj of affected) {
+        affectedCounts.set(proj, (affectedCounts.get(proj) || 0) + 1);
+      }
+    }
+
+    return projects.map((p) => ({
+      ...p,
+      touched_count: touchCountMap.get(p.name) || 0,
+      dependent_count: transitiveDependents.get(p.name)?.length || 0,
+      load:
+        (touchCountMap.get(p.name) || 0) *
+        (transitiveDependents.get(p.name)?.length || 0),
+      affected_count: affectedCounts.get(p.name) || 0,
+    }));
   }
 
   async close(): Promise<void> {

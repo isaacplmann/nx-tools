@@ -10,6 +10,13 @@ export interface Project {
   created_at?: string;
 }
 
+export interface ProjectMetrics extends Project {
+  touched_count?: number;
+  dependent_count?: number;
+  load?: number;
+  affected_count?: number;
+}
+
 export interface ProjectFile {
   id?: number;
   project_id: number;

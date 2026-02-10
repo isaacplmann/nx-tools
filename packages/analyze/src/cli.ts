@@ -128,14 +128,7 @@ Examples:
           logger.error('Commit count must be a positive number');
           return 1;
         }
-        const projects = await db.getAllProjects();
-        logger.log('Projects loaded');
-        const touchedCounts = await db.getAllProjectsTouchedCount(commitCount);
-        logger.log('Calculated touched count');
-        const loads = await db.getAllProjectsLoad(commitCount);
-        logger.log('Calculated project loads');
-        const affectedCounts = await db.getAllProjectsAffectedCount(commitCount);
-        logger.log('Calculated affected count');
+        const projects = await db.getAllProjectsMetrics(commitCount);
 
         if (projects.length === 0) {
           logger.log('No projects found');
@@ -143,22 +136,13 @@ Examples:
           logger.log('Projects:');
 
           const sortedProjects = projects
-            .map((project) => ({
-              ...project,
-              touchedCount:
-                touchedCounts.find((p) => p.name === project.name)
-                  ?.touch_count || 0,
-              load: loads.find((p) => p.name === project.name)?.load || 0,
-              affectedCount:
-                affectedCounts.find((p) => p.name === project.name)
-                  ?.affected_count || 0,
-            }))
-            .sort((a, b) => b.load - a.load);
+            .sort((a, b) => (b.load || 0) - (a.load || 0));
           logger.table(sortedProjects, [
             'name',
-            'touchedCount',
+            'touched_count',
+            'dependent_count',
             'load',
-            'affectedCount',
+            'affected_count',
           ]);
         }
         break;
