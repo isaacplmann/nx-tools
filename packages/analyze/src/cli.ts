@@ -81,8 +81,6 @@ Examples:
         );
         const deps = await db.syncAllProjectDependencies();
         logger.log(`Successfully synced ${deps.length} project dependencies`);
-        const fileDeps = await db.syncFileDependenciesFromNx();
-        logger.log(`Successfully synced ${fileDeps} file dependencies`);
 
         const [commitCountStr] = args.slice(1);
         const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
@@ -124,10 +122,20 @@ Examples:
       }
 
       case 'list-projects': {
+        const [commitCountStr] = args.slice(1);
+        const commitCount = commitCountStr ? parseInt(commitCountStr, 10) : 100;
+        if (isNaN(commitCount) || commitCount <= 0) {
+          logger.error('Commit count must be a positive number');
+          return 1;
+        }
         const projects = await db.getAllProjects();
-        const touchedCounts = await db.getAllProjectsTouchedCount();
-        const loads = await db.getAllProjectsLoad();
-        const affectedCounts = await db.getAllProjectsAffectedCount();
+        logger.log('Projects loaded');
+        const touchedCounts = await db.getAllProjectsTouchedCount(commitCount);
+        logger.log('Calculated touched count');
+        const loads = await db.getAllProjectsLoad(commitCount);
+        logger.log('Calculated project loads');
+        const affectedCounts = await db.getAllProjectsAffectedCount(commitCount);
+        logger.log('Calculated affected count');
 
         if (projects.length === 0) {
           logger.log('No projects found');

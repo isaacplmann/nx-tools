@@ -1067,56 +1067,77 @@ export class ProjectDatabase {
   async getAllProjectsAffectedCount(
     commitCount = 100
   ): Promise<{ name: string; affected_count: number }[]> {
-    const query = `
-      WITH touched_commits AS (
-        SELECT id FROM git_commits
-        ORDER BY date DESC
-        LIMIT ?
-      ),
-      directly_touched_projects AS (
-        SELECT DISTINCT p.name
-        FROM projects p
-        JOIN project_files pf ON pf.project_id = p.id
-        JOIN touched_files tf ON tf.file_path = pf.file_path
-        WHERE tf.commit_id IN (SELECT id FROM touched_commits)
-      ),
-      recursive_dependents AS (
-        -- Base case: directly touched projects
-        SELECT name FROM directly_touched_projects
-        
-        UNION ALL
-        
-        -- Recursive case: projects that depend on already-found projects
-        SELECT DISTINCT pd.source_project
-        FROM project_dependencies pd
-        INNER JOIN recursive_dependents rd ON pd.target_project = rd.name
-      ),
-      project_deps_transitive AS (
-        -- Base case: direct dependencies
-        SELECT source_project, target_project FROM project_dependencies
-        
-        UNION ALL
-        
-        -- Recursive case: transitive dependencies
-        SELECT pdt.source_project, pd.target_project
-        FROM project_deps_transitive pdt
-        JOIN project_dependencies pd ON pdt.target_project = pd.source_project
-      )
-      SELECT rd.name, COUNT(DISTINCT tf.commit_id) as affected_count
-      FROM recursive_dependents rd
-      LEFT JOIN project_deps_transitive pdt ON pdt.source_project = rd.name
-      LEFT JOIN directly_touched_projects dtp ON pdt.target_project = dtp.name OR rd.name = dtp.name
-      LEFT JOIN projects p ON p.name = dtp.name
-      LEFT JOIN project_files pf ON pf.project_id = p.id
-      LEFT JOIN touched_files tf ON tf.file_path = pf.file_path AND tf.commit_id IN (SELECT id FROM touched_commits)
-      WHERE dtp.name IS NOT NULL
-      GROUP BY rd.name
-      ORDER BY affected_count DESC
-    `;
+    // Step 1: get recent commit ids
+    const commitRows = await this.query<{ id: number }>(
+      `SELECT id FROM git_commits ORDER BY date DESC LIMIT ?`,
+      [commitCount]
+    );
 
-    return this.query<{ name: string; affected_count: number }>(query, [
-      commitCount,
-    ]);
+    const commitIds = commitRows.map((r) => r.id);
+
+    if (commitIds.length === 0) return [];
+
+    // Step 1 (cont): get touched projects per commit
+    const touchedRows = await this.query<{
+      commit_id: number;
+      project_name: string;
+    }>(
+      `
+        SELECT tf.commit_id, p.name as project_name
+        FROM touched_files tf
+        JOIN project_files pf ON pf.file_path = tf.file_path
+        JOIN projects p ON p.id = pf.project_id
+        WHERE tf.commit_id IN (${commitIds.map(() => '?').join(',')})
+      `,
+      commitIds as any
+    );
+
+    // Build map: commitId -> Set of directly touched project names
+    const touchedByCommit = new Map<number, Set<string>>();
+    for (const r of touchedRows) {
+      const s = touchedByCommit.get(r.commit_id) || new Set<string>();
+      s.add(r.project_name);
+      touchedByCommit.set(r.commit_id, s);
+    }
+
+    // Step 2: build dependents map
+    const projectsToCompute = new Set<string>();
+    for (const r of touchedRows) projectsToCompute.add(r.project_name);
+
+    const transitiveDependents = new Map<string, string[]>();
+    for (const proj of projectsToCompute) {
+      transitiveDependents.set(proj, await this.getProjectDependencies(proj));
+    }
+
+    // Step 3: for each commit, compute affected projects (touched + dependents)
+    const affectedCounts = new Map<string, number>();
+
+    for (const commitId of commitIds) {
+      const touched = touchedByCommit.get(commitId) || new Set<string>();
+      const affected = new Set<string>();
+
+      for (const t of touched) {
+        affected.add(t);
+        const depsSet = transitiveDependents.get(t);
+        if (depsSet) depsSet.forEach((p) => affected.add(p));
+      }
+
+      // Step 4: increment counts for each affected project for this commit
+      for (const proj of affected) {
+        affectedCounts.set(proj, (affectedCounts.get(proj) || 0) + 1);
+      }
+    }
+
+    // Ensure all projects are present (with zero) so result covers every project
+    const allProjects = await this.query<{ name: string }>('SELECT name FROM projects');
+    const result: { name: string; affected_count: number }[] = allProjects.map((p) => ({
+      name: p.name,
+      affected_count: affectedCounts.get(p.name) || 0,
+    }));
+
+    // Sort by descending affected_count
+    result.sort((a, b) => b.affected_count - a.affected_count);
+    return result;
   }
 
   async close(): Promise<void> {
