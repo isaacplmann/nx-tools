@@ -27,6 +27,7 @@ describe('db CLI', () => {
     let err = '';
     const logger = {
       log: (...a: any[]) => (out += a.join(' ') + '\n'),
+      table: (...a: any[]) => (out += a.map(r => JSON.stringify(r, null, 2)).join('\n') + '\n'),
       error: (...a: any[]) => (err += a.join(' ') + '\n'),
     };
     const code = await runCLI(args, { dbPath: dbFile, logger });

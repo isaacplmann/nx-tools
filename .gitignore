@@ -49,3 +49,6 @@ Thumbs.db
 .github/instructions/nx.instructions.md
 
 test-output
+
+# Ignore test output files
+packages/analyzer-e2e/test-project

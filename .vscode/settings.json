@@ -4,6 +4,7 @@
   ],
   "chat.tools.terminal.autoApprove": {
     "npx nx": true,
-    "nx": true
+    "nx": true,
+    "npm run build": true
   }
 }

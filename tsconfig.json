@@ -7,9 +7,6 @@
       "path": "./packages/analyze"
     },
     {
-      "path": "./packages/analyzer"
-    },
-    {
       "path": "./example/libs/movies/feature-movie-detail-page"
     },
     {
@@ -38,9 +35,6 @@
     },
     {
       "path": "./example/apps/movies"
-    },
-    {
-      "path": "./packages/analyzer-e2e"
     },
     {
       "path": "./example/libs/shared/auth/ui-not-authenticated-page"

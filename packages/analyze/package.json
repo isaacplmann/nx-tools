@@ -35,7 +35,9 @@
     "targets": {
       "start": {
         "executor": "nx:run-commands",
-        "dependsOn": ["build"],
+        "dependsOn": [
+          "build"
+        ],
         "options": {
           "cwd": "{workspaceRoot}",
           "command": "node ./packages/analyze/dist/cli.js"
