@@ -33,6 +33,13 @@
   "nx": {
     "name": "@nx-tools/analyze",
     "targets": {
+      "package": {
+        "dependsOn": ["build", "project-view:build"],
+        "options": {
+          "cwd": "{workspaceRoot}",
+          "command": "cp -r apps/project-view/.next packages/analyze/dist"
+        }
+      },
       "start": {
         "executor": "nx:run-commands",
         "dependsOn": [

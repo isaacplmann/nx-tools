@@ -16,7 +16,6 @@
   },
   "nxCloudId": "68e5116cb38be000e0bd89c7",
   "plugins": [
-    "@nx-tools/analyzer",
     {
       "plugin": "@nx/js/typescript",
       "options": {

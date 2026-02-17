@@ -713,6 +713,24 @@ export class ProjectDatabase {
     ).then((rows) => rows.map((r) => r.file_path));
   }
 
+  /**
+   * Get projects that have files depending on the given file.
+   * Returns unique project names.
+   */
+  async getProjectsDependingOnFile(filePath: string): Promise<string[]> {
+    return this.query<{ name: string }>(
+      `
+        SELECT DISTINCT p.name
+        FROM projects p
+        JOIN project_files pf ON p.id = pf.project_id
+        JOIN file_dependencies fd ON fd.file_path = pf.file_path
+        WHERE fd.depends_on_file = ?
+        ORDER BY p.name
+      `,
+      [filePath]
+    ).then((rows) => rows.map((r) => r.name));
+  }
+
   async syncFileDependenciesFromNx(workspaceRoot?: string): Promise<number> {
     const root = workspaceRoot ? path.resolve(workspaceRoot) : process.cwd();
     // Determine Nx cache dir from nx.json if present, default to .nx

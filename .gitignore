@@ -52,3 +52,6 @@ test-output
 
 # Ignore test output files
 packages/analyzer-e2e/test-project
+
+# Next
+.next

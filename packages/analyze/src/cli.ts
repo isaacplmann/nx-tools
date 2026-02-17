@@ -3,7 +3,7 @@
 import { ProjectDatabase } from './lib/db.js';
 import * as process from 'process';
 import * as path from 'path';
-import generateArchitectureDiagram from './lib/view.js';
+import { spawn } from 'child_process';
 
 export async function runCLI(
   args: string[],
@@ -67,7 +67,10 @@ Examples:
   try {
     switch (command) {
       case 'view': {
-        logger.log(await generateArchitectureDiagram(dbPath));
+        await spawn('npx', ['next', 'start'], {
+          cwd: path.join(process.cwd(), 'dist'),
+          stdio: 'inherit',
+        });
         break;
       }
 
@@ -135,8 +138,9 @@ Examples:
         } else {
           logger.log('Projects:');
 
-          const sortedProjects = projects
-            .sort((a, b) => (b.load || 0) - (a.load || 0));
+          const sortedProjects = projects.sort(
+            (a, b) => (b.load || 0) - (a.load || 0)
+          );
           logger.table(sortedProjects, [
             'name',
             'touched_count',

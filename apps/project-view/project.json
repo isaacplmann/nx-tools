@@ -1,0 +1,30 @@
+{
+  "name": "project-view",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/project-view",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "serve": {
+      "executor": "@nx/next:server",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "project-view:build",
+        "dev": true
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "project-view:build:development",
+          "dev": true
+        },
+        "production": {
+          "buildTarget": "project-view:build:production",
+          "dev": false
+        }
+      }
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint"
+    }
+  }
+}
