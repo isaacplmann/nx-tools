@@ -40,7 +40,7 @@ Commands:
   touched-projects [commit-count]        Show projects touched by recent git changes (default: 100)
 
   File Dependency Commands:
-  sync-file-deps [workspace-root]        Sync file dependencies from Nx file-map.json
+  sync-file-deps [project-name]          Sync file dependencies for a particular project using file-map.json
   file-deps <file>                       List files that the given file depends on
   file-dependents <file>                 List files that depend on the given file
 
@@ -108,8 +108,6 @@ Examples:
         );
         const deps = await db.syncAllProjectDependencies();
         logger.log(`Successfully synced ${deps.length} project dependencies`);
-        const fileDeps = await db.syncFileDependenciesFromNx(workspaceRoot);
-        logger.log(`Successfully synced ${fileDeps} file dependencies`);
         break;
       }
 
@@ -247,10 +245,19 @@ Examples:
       }
 
       case 'sync-file-deps': {
-        const [workspaceRoot] = args.slice(1);
+        const [projectName] = args.slice(1);
         logger.log('Syncing file dependencies from Nx file map...');
-        const count = await db.syncFileDependenciesFromNx(workspaceRoot);
-        logger.log(`Synced ${count} file dependency relations`);
+        if (projectName) {
+          const count = await db.syncFileDependenciesForProject(projectName);
+          logger.log(
+            `Synced ${count} file dependency relations for project "${projectName}"`
+          );
+        } else {
+          const count = await db.syncFileDependenciesFromNx();
+          logger.log(
+            `Synced ${count} file dependency relations from Nx file map`
+          );
+        }
         break;
       }
 

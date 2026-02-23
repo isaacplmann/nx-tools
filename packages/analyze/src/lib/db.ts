@@ -589,6 +589,210 @@ export class ProjectDatabase {
     });
   }
 
+  /**
+   * Loads and parses the Nx file map from the cache directory.
+   * Returns the parsed file map data and the workspace root.
+   */
+  private loadNxFileMap(): {
+    root: string;
+    cacheDir: string;
+    nonProjectFiles: Array<{ file: string; deps?: unknown }>;
+    projectFileMap: Record<string, Array<{ file: string; deps?: unknown }>>;
+  } {
+    const root = process.cwd();
+    // Determine Nx cache dir from nx.json if present, default to .nx
+    let cacheDir = '.nx';
+    try {
+      const nxJsonPath = path.join(root, 'nx.json');
+      if (fs.existsSync(nxJsonPath)) {
+        const nxConfig = JSON.parse(
+          fs.readFileSync(nxJsonPath, 'utf8')
+        ) as Record<string, unknown>;
+        const installation = (nxConfig as any).installation;
+        if (
+          installation &&
+          typeof installation === 'object' &&
+          typeof (installation as any).cacheDirectory === 'string'
+        ) {
+          cacheDir = (installation as any).cacheDirectory as string;
+        }
+      }
+    } catch {
+      // ignore and use default
+    }
+
+    const fileMapPath = path.join(
+      root,
+      cacheDir,
+      'workspace-data',
+      'file-map.json'
+    );
+    if (!fs.existsSync(fileMapPath)) {
+      throw new Error(`Nx file map not found at ${fileMapPath}`);
+    }
+
+    const content = fs.readFileSync(fileMapPath, 'utf8');
+    const parsed = JSON.parse(content) as any;
+
+    const nonProjectFiles: Array<{ file: string; deps?: unknown }> =
+      parsed?.fileMap?.nonProjectFiles ?? [];
+    const projectFileMap =
+      parsed?.fileMap?.projectFileMap ??
+      ({} as Record<string, Array<{ file: string; deps?: unknown }>>);
+
+    return { root, cacheDir, nonProjectFiles, projectFileMap };
+  }
+
+  /**
+   * Creates a TypeScript program and checker from a list of file paths.
+   * Returns undefined if program creation fails (graceful fallback).
+   */
+  private createTypeScriptProgram(
+    root: string,
+    filePaths: string[]
+  ): { program: ts.Program; checker: ts.TypeChecker } | undefined {
+    try {
+      const configFilePath =
+        ts.findConfigFile(root, ts.sys.fileExists) ||
+        path.join(root, 'tsconfig.json');
+      const configHost: ts.ParseConfigFileHost = {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic: () => {
+          /** intentionally empty */
+        },
+      };
+      const parsedConfig = ts.getParsedCommandLineOfConfigFile(
+        configFilePath,
+        undefined,
+        configHost
+      );
+
+      const program = ts.createProgram(filePaths, parsedConfig?.options || {});
+      const checker = program.getTypeChecker();
+      return { program, checker };
+    } catch (e) {
+      // If program creation fails (e.g., missing files in test environment), return undefined
+      return undefined;
+    }
+  }
+
+  /**
+   * Batch inserts file dependency records into the database in a single transaction.
+   */
+  private async batchInsertFileDependencies(
+    records: Array<{
+      filePath: string;
+      dependsOn: string;
+      defined_in_file?: string | null;
+    }>
+  ): Promise<void> {
+    if (records.length === 0) {
+      return;
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      this.db.serialize(() => {
+        this.db.run('BEGIN TRANSACTION');
+        const stmt = this.db.prepare(
+          'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on_project, depends_on_file) VALUES (?, ?, ?)'
+        );
+
+        let pending = records.length;
+
+        for (const r of records) {
+          stmt.run(
+            [r.filePath, r.dependsOn, r.defined_in_file],
+            (err: Error | null) => {
+              if (err) {
+                // Ensure stmt finalized and propagate error
+                stmt.finalize();
+                reject(err);
+                return;
+              }
+
+              pending--;
+              if (pending === 0) {
+                stmt.finalize((err) => {
+                  if (err) return reject(err);
+                  this.db.run('COMMIT', (err) => {
+                    if (err) return reject(err);
+                    resolve();
+                  });
+                });
+              }
+            }
+          );
+        }
+      });
+    });
+  }
+
+  /**
+   * Processes a single file entry to extract dependency records.
+   * Returns an array of dependency records found for this file.
+   */
+  private processFileEntry(
+    filePathRel: string,
+    deps: unknown,
+    projectName: string,
+    root: string,
+    program?: ts.Program,
+    checker?: ts.TypeChecker
+  ): Array<{
+    filePath: string;
+    dependsOn: string;
+    defined_in_file?: string | null;
+  }> {
+    const records: Array<{
+      filePath: string;
+      dependsOn: string;
+      defined_in_file?: string | null;
+    }> = [];
+
+    if (!deps || !Array.isArray(deps)) return records;
+
+    for (const dep of deps) {
+      let depStr: string | undefined;
+      if (typeof dep === 'string') {
+        depStr = dep;
+      } else if (
+        Array.isArray(dep) &&
+        dep.length > 0 &&
+        typeof dep[0] === 'string'
+      ) {
+        depStr = dep[0] as string;
+      }
+      if (!depStr) continue;
+      if (
+        (depStr.startsWith('npm:') &&
+          !depStr.startsWith('npm:' + projectName)) ||
+        depStr === 'dynamic'
+      )
+        continue;
+
+      // Resolve file path to absolute when program provided
+      const absFile = path.resolve(root, filePathRel);
+
+      let found: SymbolDefinition[] = [];
+      if (program && checker) {
+        found = this.findDefinition(absFile, depStr, program, checker);
+      } else {
+        // Fallback to old behavior (slower)
+        found = this.findDefinition(filePathRel, depStr);
+      }
+
+      for (const f of found) {
+        records.push({
+          filePath: filePathRel,
+          dependsOn: depStr,
+          defined_in_file: f.defined_in_file ?? null,
+        });
+      }
+    }
+
+    return records;
+  }
+
   // Accept an optional Program & TypeChecker to avoid rebuilding per-file (performance)
   findDefinition(
     fileName: string,
@@ -731,47 +935,61 @@ export class ProjectDatabase {
     ).then((rows) => rows.map((r) => r.name));
   }
 
-  async syncFileDependenciesFromNx(workspaceRoot?: string): Promise<number> {
-    const root = workspaceRoot ? path.resolve(workspaceRoot) : process.cwd();
-    // Determine Nx cache dir from nx.json if present, default to .nx
-    let cacheDir = '.nx';
-    try {
-      const nxJsonPath = path.join(root, 'nx.json');
-      if (fs.existsSync(nxJsonPath)) {
-        const nxConfig = JSON.parse(
-          fs.readFileSync(nxJsonPath, 'utf8')
-        ) as Record<string, unknown>;
-        const installation = (nxConfig as any).installation;
-        if (
-          installation &&
-          typeof installation === 'object' &&
-          typeof (installation as any).cacheDirectory === 'string'
-        ) {
-          cacheDir = (installation as any).cacheDirectory as string;
-        }
-      }
-    } catch {
-      // ignore and use default
+  /**
+   * Finds all outgoing file dependencies from a single project.
+   * Returns an array of dependency records that should be inserted into the database.
+   */
+  private findProjectFileDependencies(
+    projectName: string,
+    projectFiles: Array<{ file: string; deps?: unknown }>,
+    root: string,
+    program?: ts.Program,
+    checker?: ts.TypeChecker
+  ): Array<{
+    filePath: string;
+    dependsOn: string;
+    defined_in_file?: string | null;
+  }> {
+    const records: Array<{
+      filePath: string;
+      dependsOn: string;
+      defined_in_file?: string | null;
+    }> = [];
+
+    // Process all files in this project
+    for (const entry of projectFiles) {
+      const entryRecords = this.processFileEntry(
+        entry.file,
+        entry.deps,
+        projectName,
+        root,
+        program,
+        checker
+      );
+      records.push(...entryRecords);
     }
 
-    const fileMapPath = path.join(
-      root,
-      cacheDir,
-      'workspace-data',
-      'file-map.json'
-    );
-    if (!fs.existsSync(fileMapPath)) {
-      throw new Error(`Nx file map not found at ${fileMapPath}`);
+    return records;
+  }
+
+  /**
+   * Syncs file dependencies for a single project.
+   * This includes:
+   * - Outgoing dependencies: files in the project that depend on other projects
+   * - Incoming dependencies: files in other projects that depend on files in this project
+   */
+  async syncFileDependenciesForProject(
+    projectName: string
+  ): Promise<number> {
+    const { root, nonProjectFiles, projectFileMap } = this.loadNxFileMap();
+
+    // Get the project's files
+    const projectFiles = projectFileMap[projectName];
+    if (!projectFiles || projectFiles.length === 0) {
+      return 0;
     }
 
-    const content = fs.readFileSync(fileMapPath, 'utf8');
-    const parsed = JSON.parse(content) as any;
-
-    // Collect all file records to build a single TS program (faster than per-file)
-    const nonProjectFiles: Array<{ file: string; deps?: unknown }> =
-      parsed?.fileMap?.nonProjectFiles ?? [];
-    const projectFileMap = parsed?.fileMap?.projectFileMap ?? {};
-
+    // Collect all file entries to build a TS program
     const allEntries: Array<{ file: string; deps?: unknown }> = [];
     for (const entry of nonProjectFiles) allEntries.push(entry);
     for (const files of Object.values(projectFileMap)) {
@@ -783,36 +1001,110 @@ export class ProjectDatabase {
       new Set(allEntries.map((e) => path.resolve(root, e.file)))
     );
 
-    // Try to create a single program; if it fails, fall back to per-file parsing
-    let program: ts.Program | undefined;
-    let checker: ts.TypeChecker | undefined;
+    // Create TypeScript program for all files
+    const tsProgram = this.createTypeScriptProgram(root, allFileAbs);
+    const program = tsProgram?.program;
+    const checker = tsProgram?.checker;
 
-    try {
-      const configFilePath =
-        ts.findConfigFile(root, ts.sys.fileExists) ||
-        path.join(root, 'tsconfig.json');
-      const configHost: ts.ParseConfigFileHost = {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic: () => {
-          /** intentionally empty */
-        },
-      };
-      const parsedConfig = ts.getParsedCommandLineOfConfigFile(
-        configFilePath,
-        undefined,
-        configHost
-      );
+    const records: Array<{
+      filePath: string;
+      dependsOn: string;
+      defined_in_file?: string | null;
+    }> = [];
 
-      program = ts.createProgram(allFileAbs, parsedConfig?.options || {});
-      checker = program.getTypeChecker();
-    } catch (e) {
-      // If program creation fails (e.g., missing files in test environment), we will
-      // gracefully fall back to the previous per-file approach below.
-      program = undefined;
-      checker = undefined;
+    // Process outgoing dependencies: files in this project that depend on other projects
+    const outgoingRecords = this.findProjectFileDependencies(
+      projectName,
+      projectFiles,
+      root,
+      program,
+      checker
+    );
+    records.push(...outgoingRecords);
+
+    // Process incoming dependencies: files in other projects that depend on this project
+    // We need to check all other files to see if they depend on this project
+    const projectFileSet = new Set(
+      projectFiles.map((f) => path.resolve(root, f.file))
+    );
+
+    for (const [otherProjectName, otherFiles] of Object.entries(
+      projectFileMap
+    )) {
+      if (otherProjectName === projectName) continue; // Already processed above
+
+      for (const entry of otherFiles) {
+        const entryRecords = this.processFileEntry(
+          entry.file,
+          entry.deps,
+          otherProjectName,
+          root,
+          program,
+          checker
+        );
+
+        // Filter to only include dependencies that target this project
+        // Either depends_on_project matches, or depends_on_file is in this project
+        for (const record of entryRecords) {
+          if (
+            record.dependsOn === projectName ||
+            (record.defined_in_file &&
+              projectFileSet.has(path.resolve(root, record.defined_in_file)))
+          ) {
+            records.push(record);
+          }
+        }
+      }
     }
 
-    let inserted = 0;
+    // Also check non-project files for dependencies on this project
+    for (const entry of nonProjectFiles) {
+      const entryRecords = this.processFileEntry(
+        entry.file,
+        entry.deps,
+        '',
+        root,
+        program,
+        checker
+      );
+
+      // Filter to only include dependencies that target this project
+      for (const record of entryRecords) {
+        if (
+          record.dependsOn === projectName ||
+          (record.defined_in_file &&
+            projectFileSet.has(path.resolve(root, record.defined_in_file)))
+        ) {
+          records.push(record);
+        }
+      }
+    }
+
+    // Batch insert all records
+    await this.batchInsertFileDependencies(records);
+
+    return records.length;
+  }
+
+  async syncFileDependenciesFromNx(): Promise<number> {
+    const { root, nonProjectFiles, projectFileMap } = this.loadNxFileMap();
+
+    // Collect all file records to build a single TS program (faster than per-file)
+    const allEntries: Array<{ file: string; deps?: unknown }> = [];
+    for (const entry of nonProjectFiles) allEntries.push(entry);
+    for (const files of Object.values(projectFileMap)) {
+      for (const entry of files as any) allEntries.push(entry);
+    }
+
+    // Build absolute file list for TS program
+    const allFileAbs = Array.from(
+      new Set(allEntries.map((e) => path.resolve(root, e.file)))
+    );
+
+    // Create TypeScript program for all files
+    const tsProgram = this.createTypeScriptProgram(root, allFileAbs);
+    const program = tsProgram?.program;
+    const checker = tsProgram?.checker;
 
     await this.clearFileDependencies();
 
@@ -823,89 +1115,34 @@ export class ProjectDatabase {
       defined_in_file?: string | null;
     }> = [];
 
-    const processEntry = (filePathRel: string, deps: unknown) => {
-      if (!deps || !Array.isArray(deps)) return;
-      for (const dep of deps) {
-        let depStr: string | undefined;
-        if (typeof dep === 'string') depStr = dep;
-        else if (
-          Array.isArray(dep) &&
-          dep.length > 0 &&
-          typeof dep[0] === 'string'
-        )
-          depStr = dep[0] as string;
-        if (!depStr) continue;
-        if (depStr.startsWith('npm:') || depStr === 'dynamic') continue;
+    // Process each project's files
+    for (const [projectName, files] of Object.entries(projectFileMap)) {
+      const projectRecords = this.findProjectFileDependencies(
+        projectName,
+        files as Array<{ file: string; deps?: unknown }>,
+        root,
+        program,
+        checker
+      );
+      records.push(...projectRecords);
+    }
 
-        // Resolve file path to absolute when program provided
-        const absFile = path.resolve(root, filePathRel);
-
-        let found: SymbolDefinition[] = [];
-        if (program && checker) {
-          found = this.findDefinition(absFile, depStr, program, checker);
-        } else {
-          // Fallback to old behavior (slower)
-          found = this.findDefinition(filePathRel, depStr);
-        }
-
-        for (const f of found) {
-          records.push({
-            filePath: filePathRel,
-            dependsOn: depStr,
-            defined_in_file: f.defined_in_file ?? null,
-          });
-          inserted++;
-        }
-      }
-    };
-
-    // Process all entries
-    for (const entry of allEntries) {
-      processEntry(entry.file, (entry as any).deps);
+    // Process non-project files (treat as a special "non-project" project)
+    if (nonProjectFiles.length > 0) {
+      const nonProjectRecords = this.findProjectFileDependencies(
+        '',
+        nonProjectFiles,
+        root,
+        program,
+        checker
+      );
+      records.push(...nonProjectRecords);
     }
 
     // Batch insert all records in a single transaction for performance
-    if (records.length > 0) {
-      await new Promise<void>((resolve, reject) => {
-        this.db.serialize(() => {
-          this.db.run('BEGIN TRANSACTION');
-          const stmt = this.db.prepare(
-            'INSERT OR IGNORE INTO file_dependencies (file_path, depends_on_project, depends_on_file) VALUES (?, ?, ?)'
-          );
+    await this.batchInsertFileDependencies(records);
 
-          let pending = records.length;
-
-          for (const r of records) {
-            stmt.run(
-              [r.filePath, r.dependsOn, r.defined_in_file],
-              (err: Error | null) => {
-                if (err) {
-                  // Ensure stmt finalized and propagate error
-                  stmt.finalize();
-                  reject(err);
-                  return;
-                }
-
-                pending--;
-                if (pending === 0) {
-                  stmt.finalize((err) => {
-                    if (err) return reject(err);
-                    this.db.run('COMMIT', (err) => {
-                      if (err) return reject(err);
-                      resolve();
-                    });
-                  });
-                }
-              }
-            );
-          }
-
-          // Handle case where records.length === 0 handled above
-        });
-      });
-    }
-
-    return inserted;
+    return records.length;
   }
 
   // Git commit tracking methods
@@ -1163,10 +1400,12 @@ export class ProjectDatabase {
     if (projectsToCompute.size > 0) {
       const projectsArr = Array.from(projectsToCompute);
       await Promise.all(
-        projectsArr.map((p) => this.getProjectDependents(p).then(deps => {
-          transitiveDependents.set(p, deps);
-          return deps;
-        }))
+        projectsArr.map((p) =>
+          this.getProjectDependents(p).then((deps) => {
+            transitiveDependents.set(p, deps);
+            return deps;
+          })
+        )
       );
     }
 
@@ -1262,10 +1501,12 @@ export class ProjectDatabase {
     if (projectsToCompute.size > 0) {
       const projectsArr = Array.from(projectsToCompute);
       await Promise.all(
-        projectsArr.map((p) => this.getProjectDependents(p).then(deps => {
-          transitiveDependents.set(p, deps);
-          return deps;
-        }))
+        projectsArr.map((p) =>
+          this.getProjectDependents(p).then((deps) => {
+            transitiveDependents.set(p, deps);
+            return deps;
+          })
+        )
       );
     }
 
