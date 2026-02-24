@@ -417,18 +417,62 @@ export class ProjectDatabase {
     { source: string; target: string }[]
   > {
     try {
-      const projectGraph = await createProjectGraphAsync({
-        exitOnError: false,
-      });
+      const projectGraph = await createProjectGraphAsync({ exitOnError: false });
       const dependencies: { source: string; target: string }[] = [];
+
+      // 1) Start with the dependencies from the Nx project graph
       for (const [projectName, deps] of Object.entries(
         projectGraph.dependencies
       )) {
         dependencies.push(
-          ...deps
-            .filter((dep) => !dep.target.startsWith('npm:')) // Exclude external dependencies
-            .map((dep) => ({ source: projectName, target: dep.target }))
+          ...deps.map((dep) => ({ source: projectName, target: dep.target }))
         );
+      }
+
+      // 2) Augment with dependencies inferred from the Nx file map.
+      //    We look for file deps that reference a project name directly
+      //    or with an `npm:` prefix (e.g. `npm:my-project`).
+      const { projectFileMap } = this.loadNxFileMap();
+      const projectNames = new Set(Object.keys(projectGraph.nodes));
+
+      for (const [sourceProject, files] of Object.entries(projectFileMap)) {
+        if (!projectNames.has(sourceProject)) continue;
+
+        for (const entry of files) {
+          const deps = (entry as any).deps;
+          if (!deps || !Array.isArray(deps)) continue;
+
+          for (const dep of deps) {
+            let depStr: string | undefined;
+            if (typeof dep === 'string') {
+              depStr = dep;
+            } else if (
+              Array.isArray(dep) &&
+              dep.length > 0 &&
+              typeof dep[0] === 'string'
+            ) {
+              depStr = dep[0] as string;
+            }
+            if (!depStr || depStr === 'dynamic') continue;
+
+            // Match direct project name
+            if (projectNames.has(depStr)) {
+              dependencies.push({ source: sourceProject, target: depStr });
+              continue;
+            }
+
+            // Match `npm:` + project name
+            if (depStr.startsWith('npm:')) {
+              const candidate = depStr.slice('npm:'.length);
+              if (projectNames.has(candidate)) {
+                dependencies.push({
+                  source: sourceProject,
+                  target: candidate,
+                });
+              }
+            }
+          }
+        }
       }
 
       // Persist dependencies to the database (replace existing)
@@ -978,9 +1022,7 @@ export class ProjectDatabase {
    * - Outgoing dependencies: files in the project that depend on other projects
    * - Incoming dependencies: files in other projects that depend on files in this project
    */
-  async syncFileDependenciesForProject(
-    projectName: string
-  ): Promise<number> {
+  async syncFileDependenciesForProject(projectName: string): Promise<number> {
     const { root, nonProjectFiles, projectFileMap } = this.loadNxFileMap();
 
     // Get the project's files

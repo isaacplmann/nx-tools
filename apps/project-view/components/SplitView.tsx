@@ -17,6 +17,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const [rightFiles, setRightFiles] = useState<FileWithDependents[]>([]);
   const [hoveredFile, setHoveredFile] = useState<string | null>(null);
   const [allDependents, setAllDependents] = useState<Map<string, string[]>>(new Map());
+  const [showOnlyWithDependents, setShowOnlyWithDependents] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -82,7 +83,10 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   // Get unique projects that depend on files in each column
   const getLeftDependents = () => {
     const projects = new Set<string>();
-    leftFiles.forEach(file => {
+    const source = showOnlyWithDependents
+      ? leftFiles.filter(f => (f.dependents?.length || 0) > 0)
+      : leftFiles;
+    source.forEach(file => {
       (file.dependents || []).forEach(proj => projects.add(proj));
     });
     return Array.from(projects);
@@ -90,7 +94,10 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
 
   const getRightDependents = () => {
     const projects = new Set<string>();
-    rightFiles.forEach(file => {
+    const source = showOnlyWithDependents
+      ? rightFiles.filter(f => (f.dependents?.length || 0) > 0)
+      : rightFiles;
+    source.forEach(file => {
       (file.dependents || []).forEach(proj => projects.add(proj));
     });
     return Array.from(projects);
@@ -110,8 +117,18 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const rightDependents = getRightDependents().filter(p => !getBothDependents().includes(p));
   const bothDependents = getBothDependents();
 
+  const visibleLeftFiles = showOnlyWithDependents
+    ? leftFiles.filter(f => (f.dependents?.length || 0) > 0)
+    : leftFiles;
+  const visibleRightFiles = showOnlyWithDependents
+    ? rightFiles.filter(f => (f.dependents?.length || 0) > 0)
+    : rightFiles;
+
   // Calculate positions for drawing lines
-  const getFilePosition = (filePath: string, isLeft: boolean): { x: number; y: number } | null => {
+  const getFilePosition = (
+    filePath: string,
+    side: 'leftEdge' | 'rightEdge'
+  ): { x: number; y: number } | null => {
     if (!containerRef.current) return null;
     const container = containerRef.current;
     const fileElement = container.querySelector(
@@ -121,13 +138,15 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     
     const rect = fileElement.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
-    const column = isLeft ? container.querySelector('.left-column') : container.querySelector('.right-column');
-    if (!column) return null;
-    const columnRect = column.getBoundingClientRect();
-    
+
+    const x =
+      side === 'leftEdge'
+        ? rect.left - containerRect.left
+        : rect.right - containerRect.left;
+
     return {
-      x: isLeft ? columnRect.right : columnRect.left,
-      y: rect.top + rect.height / 2 - containerRect.top
+      x,
+      y: rect.top + rect.height / 2 - containerRect.top,
     };
   };
 
@@ -141,10 +160,22 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     
     const rect = projectElement.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
-    
+
+    let x: number;
+    if (side === 'left') {
+      // Project is on the left side of the container, line should leave from its right edge
+      x = rect.right - containerRect.left;
+    } else if (side === 'right') {
+      // Project is on the right side of the container, line should leave from its left edge
+      x = rect.left - containerRect.left;
+    } else {
+      // Project is between columns, line should start from its horizontal center
+      x = rect.left - containerRect.left + rect.width / 2;
+    }
+
     return {
-      x: side === 'left' ? rect.right : side === 'right' ? rect.left : rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2 - containerRect.top
+      x,
+      y: rect.top + rect.height / 2 - containerRect.top,
     };
   };
 
@@ -159,6 +190,35 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         gap: '24px',
       }}
     >
+      <div
+        style={{
+          position: 'absolute',
+          top: 8,
+          right: 16,
+          zIndex: 3,
+          background: 'rgba(255, 255, 255, 0.9)',
+          borderRadius: '4px',
+          padding: '4px 8px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+        }}
+      >
+        <input
+          id="show-only-with-dependents"
+          type="checkbox"
+          checked={showOnlyWithDependents}
+          onChange={e => setShowOnlyWithDependents(e.target.checked)}
+        />
+        <label
+          htmlFor="show-only-with-dependents"
+          style={{ fontSize: '11px', cursor: 'pointer', userSelect: 'none' }}
+        >
+          Only show files with dependents
+        </label>
+      </div>
+
       <svg
         ref={svgRef}
         style={{
@@ -175,8 +235,8 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         {leftDependents.map(project => {
           const projPos = getProjectPosition(project, 'left');
           if (!projPos) return null;
-          return leftFiles.map(file => {
-            const filePos = getFilePosition(file.file_path, true);
+          return visibleLeftFiles.map(file => {
+            const filePos = getFilePosition(file.file_path, 'leftEdge');
             if (!filePos || !file.dependents?.includes(project)) return null;
             const isHighlighted = hoveredFile === file.file_path;
             return (
@@ -198,8 +258,8 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         {rightDependents.map(project => {
           const projPos = getProjectPosition(project, 'right');
           if (!projPos) return null;
-          return rightFiles.map(file => {
-            const filePos = getFilePosition(file.file_path, false);
+          return visibleRightFiles.map(file => {
+            const filePos = getFilePosition(file.file_path, 'rightEdge');
             if (!filePos || !file.dependents?.includes(project)) return null;
             const isHighlighted = hoveredFile === file.file_path;
             return (
@@ -221,9 +281,12 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         {bothDependents.map(project => {
           const projPos = getProjectPosition(project, 'both');
           if (!projPos) return null;
-          return [...leftFiles, ...rightFiles].map(file => {
-            const isLeft = leftFiles.some(f => f.file_path === file.file_path);
-            const filePos = getFilePosition(file.file_path, isLeft);
+          return [...visibleLeftFiles, ...visibleRightFiles].map(file => {
+            const isLeft = visibleLeftFiles.some(f => f.file_path === file.file_path);
+            const filePos = getFilePosition(
+              file.file_path,
+              isLeft ? 'rightEdge' : 'leftEdge'
+            );
             if (!filePos || !file.dependents?.includes(project)) return null;
             const isHighlighted = hoveredFile === file.file_path;
             return (
@@ -283,9 +346,9 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         }}
       >
         <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
-          Left Column ({leftFiles.length})
+          Left Column ({visibleLeftFiles.length})
         </h3>
-        {leftFiles.map(file => (
+        {visibleLeftFiles.map(file => (
           <div
             key={file.file_path}
             data-file-path={file.file_path}
@@ -356,9 +419,9 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         }}
       >
         <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
-          Right Column ({rightFiles.length})
+          Right Column ({visibleRightFiles.length})
         </h3>
-        {rightFiles.map(file => (
+        {visibleRightFiles.map(file => (
           <div
             key={file.file_path}
             data-file-path={file.file_path}
