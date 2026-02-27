@@ -10,7 +10,9 @@ export default function SplitPage() {
   const router = useRouter();
   const projectName = decodeURIComponent(params.projectName as string);
   const [files, setFiles] = useState<ProjectFile[]>([]);
-  const [projectMetrics, setProjectMetrics] = useState<ProjectMetrics | null>(null);
+  const [projectMetrics, setProjectMetrics] = useState<ProjectMetrics | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,7 +31,9 @@ export default function SplitPage() {
 
       const filesData = await filesRes.json();
       const projectsData = await projectsRes.json();
-      const project = projectsData.find((p: ProjectMetrics) => p.name === projectName);
+      const project = projectsData.find(
+        (p: ProjectMetrics) => p.name === projectName
+      );
 
       setFiles(filesData);
       setProjectMetrics(project || null);
@@ -49,15 +53,25 @@ export default function SplitPage() {
   }
 
   return (
-    <div style={{ padding: '24px', height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div
+      style={{
+        padding: '24px',
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <div style={{ marginBottom: '16px' }}>
-        <button onClick={() => router.push('/')} style={{ marginBottom: '8px' }}>
+        <button
+          onClick={() => router.push('/')}
+          style={{ marginBottom: '8px' }}
+        >
           ← Back to Projects
         </button>
         <h1>{projectName}</h1>
         {projectMetrics && (
           <p style={{ marginTop: '8px', color: '#666' }}>
-            Estimated Load: {projectMetrics.load ?? 0}
+            Original Load: {projectMetrics.load ?? 0}
           </p>
         )}
       </div>

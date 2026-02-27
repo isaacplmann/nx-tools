@@ -21,6 +21,8 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const [allDependents, setAllDependents] = useState<Map<string, string[]>>(new Map());
   const [showOnlyWithDependents, setShowOnlyWithDependents] = useState(true);
   const [svgUpdateKey, setSvgUpdateKey] = useState(0);
+  const [leftEstimatedLoad, setLeftEstimatedLoad] = useState<number>(0);
+  const [rightEstimatedLoad, setRightEstimatedLoad] = useState<number>(0);
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -81,32 +83,71 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   }, [leftFiles, rightFiles]);
 
   const loadDependents = async () => {
-    const dependentsMap = new Map<string, string[]>();
-    for (const file of files) {
-      try {
-        const response = await fetch(
-          `/api/files/${encodeURIComponent(file.file_path)}/dependents`
-        );
-        if (response.ok) {
-          const projects = await response.json();
-          dependentsMap.set(file.file_path, projects);
-        }
-      } catch (error) {
-        console.error(`Error loading dependents for ${file.file_path}:`, error);
+    try {
+      const filePaths = files.map(f => f.file_path);
+      if (filePaths.length === 0) return;
+
+      const query = new URLSearchParams();
+      filePaths.forEach(fp => query.append('filePaths[]', fp));
+      
+      const response = await fetch(
+        `/api/project-dependency-map-for-files?${query.toString()}`
+      );
+      if (response.ok) {
+        const dependentsMap: Record<string, string[]> = await response.json();
+        setAllDependents(new Map(Object.entries(dependentsMap)));
+        
+        // Update files with dependents
+        setLeftFiles(prev => prev.map(f => ({
+          ...f,
+          dependents: dependentsMap[f.file_path] || []
+        })));
+        setRightFiles(prev => prev.map(f => ({
+          ...f,
+          dependents: dependentsMap[f.file_path] || []
+        })));
       }
+    } catch (error) {
+      console.error('Error loading dependents:', error);
     }
-    setAllDependents(dependentsMap);
-    
-    // Update files with dependents
-    setLeftFiles(prev => prev.map(f => ({
-      ...f,
-      dependents: dependentsMap.get(f.file_path) || []
-    })));
-    setRightFiles(prev => prev.map(f => ({
-      ...f,
-      dependents: dependentsMap.get(f.file_path) || []
-    })));
   };
+
+  const fetchEstimatedLoad = async (filePaths: string[]) => {
+    if (filePaths.length === 0) return 0;
+    try {
+      const query = new URLSearchParams();
+      filePaths.forEach(fp => query.append('filePaths[]', fp));
+      
+      const response = await fetch(
+        `/api/estimated-load?${query.toString()}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        return data.estimatedLoad || 0;
+      }
+    } catch (error) {
+      console.error('Error fetching estimated load:', error);
+    }
+    return 0;
+  };
+
+  // Update left estimated load when leftFiles change
+  useEffect(() => {
+    const updateLeftLoad = async () => {
+      const load = await fetchEstimatedLoad(leftFiles.map(f => f.file_path));
+      setLeftEstimatedLoad(load);
+    };
+    updateLeftLoad();
+  }, [leftFiles]);
+
+  // Update right estimated load when rightFiles change
+  useEffect(() => {
+    const updateRightLoad = async () => {
+      const load = await fetchEstimatedLoad(rightFiles.map(f => f.file_path));
+      setRightEstimatedLoad(load);
+    };
+    updateRightLoad();
+  }, [rightFiles]);
 
   const moveToRight = (filePath: string) => {
     const file = leftFiles.find(f => f.file_path === filePath);
@@ -428,9 +469,14 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           zIndex: 2,
         }}
       >
-        <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
-          Left Column ({visibleLeftFiles.length})
-        </h3>
+        <div>
+          <h3 style={{ marginBottom: '4px', fontSize: '14px', fontWeight: '600' }}>
+            Left Column ({visibleLeftFiles.length})
+          </h3>
+          <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#666' }}>
+            Estimated Load: {leftEstimatedLoad}
+          </p>
+        </div>
         {visibleLeftFiles.map(file => {
           const isFileSelected = selectedItem?.type === 'file' && selectedItem.value === file.file_path;
           const isConnectedToSelectedProject = selectedItem?.type === 'project' && file.dependents?.includes(selectedItem.value);
@@ -541,9 +587,14 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           zIndex: 2,
         }}
       >
-        <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
-          Right Column ({visibleRightFiles.length})
-        </h3>
+        <div>
+          <h3 style={{ marginBottom: '4px', fontSize: '14px', fontWeight: '600' }}>
+            Right Column ({visibleRightFiles.length})
+          </h3>
+          <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#666' }}>
+            Estimated Load: {rightEstimatedLoad}
+          </p>
+        </div>
         {visibleRightFiles.map(file => {
           const isFileSelected = selectedItem?.type === 'file' && selectedItem.value === file.file_path;
           const isConnectedToSelectedProject = selectedItem?.type === 'project' && file.dependents?.includes(selectedItem.value);

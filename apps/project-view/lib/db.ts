@@ -126,6 +126,104 @@ export class ProjectViewDb {
     ).then((rows) => rows.map((r) => r.name));
   }
 
+  async getFilesTouchedCount(
+    filePaths: string[],
+    commitCount = 100
+  ): Promise<number> {
+    if (!filePaths || filePaths.length === 0) return 0;
+
+    const placeholders = filePaths.map(() => '?').join(',');
+    const query = `
+      SELECT COUNT(DISTINCT tf.commit_id) as commit_count
+      FROM touched_files tf
+      WHERE tf.commit_id IN (
+        SELECT id FROM git_commits ORDER BY date DESC LIMIT ?
+      )
+      AND tf.file_path IN (${placeholders})
+    `;
+
+    const params = [commitCount, ...filePaths] as any;
+    const rows = await this.query<{ commit_count: number }>(query, params);
+    if (!rows || rows.length === 0) return 0;
+    return Number(rows[0].commit_count || 0);
+  }
+
+  async getProjectDependencyMapForFiles(
+    filePaths: string[]
+  ): Promise<Record<string, string[]>> {
+    const result: Record<string, string[]> = {};
+    if (!filePaths || filePaths.length === 0) return result;
+
+    const placeholders = filePaths.map(() => '?').join(',');
+    const query = `
+      SELECT fd.depends_on_file as file_path, p.name as project_name
+      FROM file_dependencies fd
+      JOIN project_files pf ON pf.file_path = fd.file_path
+      JOIN projects p ON p.id = pf.project_id
+      WHERE fd.depends_on_file IN (${placeholders})
+      ORDER BY fd.depends_on_file, p.name
+    `;
+
+    const rows = await this.query<{ file_path: string; project_name: string }>(
+      query,
+      filePaths
+    );
+
+    for (const f of filePaths) result[f] = [];
+
+    for (const r of rows) {
+      const file = r.file_path;
+      if (!result[file]) result[file] = [];
+      if (!result[file].includes(r.project_name)) result[file].push(r.project_name);
+    }
+
+    return result;
+  }
+
+  async getEstimatedLoad(
+    filePaths: string[],
+    commitCount = 100
+  ): Promise<number> {
+    if (!filePaths || filePaths.length === 0) return 0;
+
+    // Get the number of commits touching these files
+    const touchCount = await this.getFilesTouchedCount(filePaths, commitCount);
+
+    // Get direct project dependents for all files
+    const dependencyMap = await this.getProjectDependencyMapForFiles(filePaths);
+
+    // Collect all unique directly dependent projects
+    const directDependents = new Set<string>();
+    for (const projects of Object.values(dependencyMap)) {
+      for (const project of projects) {
+        directDependents.add(project);
+      }
+    }
+
+    if (directDependents.size === 0) return 0;
+
+    // Get transitive dependents for all directly dependent projects
+    const transitiveDependents = new Map<string, string[]>();
+    await Promise.all(
+      Array.from(directDependents).map((p) =>
+        this.getProjectDependents(p).then((deps) => {
+          transitiveDependents.set(p, deps);
+          return deps;
+        })
+      )
+    );
+
+    // Count total unique transitive dependents (including direct)
+    const allDependents = new Set<string>(directDependents);
+    for (const deps of transitiveDependents.values()) {
+      for (const dep of deps) {
+        allDependents.add(dep);
+      }
+    }
+
+    return touchCount * allDependents.size;
+  }
+
   async getAllProjectsMetrics(commitCount = 100): Promise<ProjectMetrics[]> {
     const [projects, commitRows] = await Promise.all([
       this.getAllProjects(),
