@@ -417,7 +417,9 @@ export class ProjectDatabase {
     { source: string; target: string }[]
   > {
     try {
-      const projectGraph = await createProjectGraphAsync({ exitOnError: false });
+      const projectGraph = await createProjectGraphAsync({
+        exitOnError: false,
+      });
       const dependencies: { source: string; target: string }[] = [];
 
       // 1) Start with the dependencies from the Nx project graph
@@ -837,6 +839,58 @@ export class ProjectDatabase {
     return records;
   }
 
+  /**
+   * When an Nx file-map entry represents a `package.json` file. This helper walks the other project files and
+   * records any imports that reference the given `projectName`.
+   */
+  private processOtherFilesForProjectDependency(
+    otherFiles: string[] | undefined,
+    projectName: string,
+    root: string,
+    program?: ts.Program,
+    checker?: ts.TypeChecker
+  ): Array<{
+    filePath: string;
+    dependsOn: string;
+    defined_in_file?: string | null;
+  }> {
+    const records: Array<{
+      filePath: string;
+      dependsOn: string;
+      defined_in_file?: string | null;
+    }> = [];
+
+    if (!otherFiles || otherFiles.length === 0) {
+      return records;
+    }
+
+    for (const relPath of otherFiles) {
+      // Only consider TypeScript sources
+      if (!relPath.endsWith('.ts') && !relPath.endsWith('.tsx')) {
+        continue;
+      }
+
+      const absFile = path.resolve(root, relPath);
+      let found: SymbolDefinition[] = [];
+
+      if (program && checker) {
+        found = this.findDefinition(absFile, projectName, program, checker);
+      } else {
+        found = this.findDefinition(relPath, projectName);
+      }
+
+      for (const f of found) {
+        records.push({
+          filePath: relPath,
+          dependsOn: projectName,
+          defined_in_file: f.defined_in_file ?? null,
+        });
+      }
+    }
+
+    return records;
+  }
+
   // Accept an optional Program & TypeChecker to avoid rebuilding per-file (performance)
   findDefinition(
     fileName: string,
@@ -902,15 +956,17 @@ export class ProjectDatabase {
                     .fileName.replace(workspaceRoot + '/', '');
                 }
               }
-              foundSymbols.push({
-                symbol: namedImport.name.text,
-                defined_in_project: targetPackage,
-                defined_in_file,
-              });
-              // Keep logging for now; can be toggled later if needed
-              // console.log(
-              //   `Import: ${namedImport.name.text} in ${fileName} defined in: ${defined_in_file}`
-              // );
+              if (!defined_in_file?.startsWith('node_modules/')) {
+                foundSymbols.push({
+                  symbol: namedImport.name.text,
+                  defined_in_project: targetPackage,
+                  defined_in_file,
+                });
+                // Keep logging for now; can be toggled later if needed
+                console.log(
+                  `Import: ${namedImport.name.text} in ${fileName} defined in: ${defined_in_file}`
+                );
+              }
             });
           }
         }
@@ -1011,6 +1067,22 @@ export class ProjectDatabase {
         checker
       );
       records.push(...entryRecords);
+
+      // If this is a package.json entry that carries an `otherFiles` list,
+      // also scan those TypeScript files for imports referencing this project.
+      if (entry.file.endsWith('package.json')) {
+        const otherFiles = projectFiles.map((f) => f.file);
+        if (otherFiles.length > 0) {
+          const otherRecords = this.processOtherFilesForProjectDependency(
+            otherFiles,
+            projectName,
+            root,
+            program,
+            checker
+          );
+          records.push(...otherRecords);
+        }
+      }
     }
 
     return records;
@@ -1021,6 +1093,9 @@ export class ProjectDatabase {
    * This includes:
    * - Outgoing dependencies: files in the project that depend on other projects
    * - Incoming dependencies: files in other projects that depend on files in this project
+   *
+   * OPTIMIZED: Only creates TS program with target project files + non-project files
+   * to avoid out-of-memory errors on large monorepos when syncing a single project.
    */
   async syncFileDependenciesForProject(projectName: string): Promise<number> {
     const { root, nonProjectFiles, projectFileMap } = this.loadNxFileMap();
@@ -1031,19 +1106,76 @@ export class ProjectDatabase {
       return 0;
     }
 
-    // Collect all file entries to build a TS program
-    const allEntries: Array<{ file: string; deps?: unknown }> = [];
-    for (const entry of nonProjectFiles) allEntries.push(entry);
-    for (const files of Object.values(projectFileMap)) {
-      for (const entry of files as any) allEntries.push(entry);
+    // OPTIMIZATION: Only include target project + non-project files in TS program,
+    // plus TypeScript files from projects that explicitly depend on this project in
+    // the Nx file map. This keeps memory usage bounded while still allowing us to
+    // detect incoming dependencies from relevant projects.
+    const relevantEntries: Array<{ file: string; deps?: unknown }> = [];
+    for (const entry of nonProjectFiles) relevantEntries.push(entry);
+    for (const entry of projectFiles) relevantEntries.push(entry);
+
+    // Include TS/TSX files from projects that declare a direct dependency on this
+    // project via their file-map "deps" (e.g. package.json entries that list the
+    // target project or npm:target).
+    for (const [otherProjectName, otherFiles] of Object.entries(
+      projectFileMap
+    )) {
+      if (otherProjectName === projectName) continue;
+
+      // Quickly check whether this project has any deps that reference the
+      // target project. If not, we skip adding its files to the TS program.
+      let hasExplicitDepOnTarget = false;
+      for (const entry of otherFiles as Array<{ file: string; deps?: unknown }>) {
+        const deps = (entry as any).deps;
+        if (!deps || !Array.isArray(deps)) continue;
+
+        for (const dep of deps) {
+          let depStr: string | undefined;
+          if (typeof dep === 'string') {
+            depStr = dep;
+          } else if (
+            Array.isArray(dep) &&
+            dep.length > 0 &&
+            typeof dep[0] === 'string'
+          ) {
+            depStr = dep[0] as string;
+          }
+
+          if (!depStr || depStr === 'dynamic') continue;
+
+          if (
+            depStr === projectName ||
+            depStr === `npm:${projectName}` ||
+            depStr.endsWith(`:${projectName}`)
+          ) {
+            hasExplicitDepOnTarget = true;
+            break;
+          }
+        }
+
+        if (hasExplicitDepOnTarget) break;
+      }
+
+      if (!hasExplicitDepOnTarget) continue;
+
+      // This project depends on the target; include its TS/TSX files in the
+      // TS program so we can scan their imports for references to the target.
+      for (const entry of otherFiles as Array<{ file: string; deps?: unknown }>) {
+        if (
+          typeof entry.file === 'string' &&
+          (entry.file.endsWith('.ts') || entry.file.endsWith('.tsx'))
+        ) {
+          relevantEntries.push(entry);
+        }
+      }
     }
 
     // Build absolute file list for TS program
     const allFileAbs = Array.from(
-      new Set(allEntries.map((e) => path.resolve(root, e.file)))
+      new Set(relevantEntries.map((e) => path.resolve(root, e.file)))
     );
 
-    // Create TypeScript program for all files
+    // Create TypeScript program only for relevant files
     const tsProgram = this.createTypeScriptProgram(root, allFileAbs);
     const program = tsProgram?.program;
     const checker = tsProgram?.checker;
@@ -1076,6 +1208,19 @@ export class ProjectDatabase {
       if (otherProjectName === projectName) continue; // Already processed above
 
       for (const entry of otherFiles) {
+        // If this is a package.json entry, also scan the project's files for
+        // imports that reference the target project.
+        if (entry.file.endsWith('package.json')) {
+          const otherRecords = this.processOtherFilesForProjectDependency(
+            otherFiles.map((f) => f.file),
+            projectName,
+            root,
+            program,
+            checker
+          );
+          records.push(...otherRecords);
+        }
+
         const entryRecords = this.processFileEntry(
           entry.file,
           entry.deps,
@@ -1131,60 +1276,87 @@ export class ProjectDatabase {
   async syncFileDependenciesFromNx(): Promise<number> {
     const { root, nonProjectFiles, projectFileMap } = this.loadNxFileMap();
 
-    // Collect all file records to build a single TS program (faster than per-file)
-    const allEntries: Array<{ file: string; deps?: unknown }> = [];
-    for (const entry of nonProjectFiles) allEntries.push(entry);
-    for (const files of Object.values(projectFileMap)) {
-      for (const entry of files as any) allEntries.push(entry);
-    }
-
-    // Build absolute file list for TS program
-    const allFileAbs = Array.from(
-      new Set(allEntries.map((e) => path.resolve(root, e.file)))
-    );
-
-    // Create TypeScript program for all files
-    const tsProgram = this.createTypeScriptProgram(root, allFileAbs);
-    const program = tsProgram?.program;
-    const checker = tsProgram?.checker;
+    // OPTIMIZATION: Aggressive batching with minimal TS programs
+    // Process one project at a time to minimize memory accumulation on large monorepos
+    const projectEntries = Object.entries(projectFileMap);
 
     await this.clearFileDependencies();
+    let totalRecords = 0;
 
-    // Gather dependency insertion records in memory first
-    const records: Array<{
-      filePath: string;
-      dependsOn: string;
-      defined_in_file?: string | null;
-    }> = [];
-
-    // Process each project's files
-    for (const [projectName, files] of Object.entries(projectFileMap)) {
-      const projectRecords = this.findProjectFileDependencies(
-        projectName,
-        files as Array<{ file: string; deps?: unknown }>,
-        root,
-        program,
-        checker
-      );
-      records.push(...projectRecords);
-    }
-
-    // Process non-project files (treat as a special "non-project" project)
+    // Process non-project files first (minimal size)
     if (nonProjectFiles.length > 0) {
-      const nonProjectRecords = this.findProjectFileDependencies(
-        '',
-        nonProjectFiles,
-        root,
-        program,
-        checker
+      const nonProjectFileAbs = Array.from(
+        new Set(nonProjectFiles.map((e) => path.resolve(root, e.file)))
       );
-      records.push(...nonProjectRecords);
+
+      try {
+        const tsProgram = this.createTypeScriptProgram(root, nonProjectFileAbs);
+        const nonProjectRecords = this.findProjectFileDependencies(
+          '',
+          nonProjectFiles,
+          root,
+          tsProgram?.program,
+          tsProgram?.checker
+        );
+
+        // Insert immediately and release memory
+        if (nonProjectRecords.length > 0) {
+          await this.batchInsertFileDependencies(nonProjectRecords);
+          totalRecords += nonProjectRecords.length;
+        }
+      } catch (e) {
+        // If TS program creation fails, continue with remaining projects
+        console.warn('Warning: Failed to process non-project files:', e);
+      }
     }
 
-    // Batch insert all records in a single transaction for performance
-    await this.batchInsertFileDependencies(records);
+    // Process each project individually - minimal TS programs to prevent memory accumulation
+    for (let i = 0; i < projectEntries.length; i++) {
+      const [projectName, files] = projectEntries[i];
 
-    return records.length;
+      try {
+        // Create TS program only for this project's files (bare minimum)
+        const projectFileAbs = Array.from(
+          new Set((files as any[]).map((e) => path.resolve(root, e.file)))
+        );
+
+        // Only create program if file count is reasonable (avoid massive projects)
+        let program: ts.Program | undefined;
+        let checker: ts.TypeChecker | undefined;
+        if (projectFileAbs.length < 500) {
+          const tsProgram = this.createTypeScriptProgram(root, projectFileAbs);
+          program = tsProgram?.program;
+          checker = tsProgram?.checker;
+        }
+        // If project is very large, skip TS checking (process without program)
+
+        const projectRecords = this.findProjectFileDependencies(
+          projectName,
+          files as Array<{ file: string; deps?: unknown }>,
+          root,
+          program,
+          checker
+        );
+
+        // Insert immediately after each project
+        if (projectRecords.length > 0) {
+          await this.batchInsertFileDependencies(projectRecords);
+          totalRecords += projectRecords.length;
+        }
+
+        // Log progress every 10 projects
+        if ((i + 1) % 10 === 0) {
+          console.log(
+            `Processed ${i + 1}/${projectEntries.length} projects...`
+          );
+        }
+      } catch (e) {
+        // Continue with next project if one fails
+        console.warn(`Warning: Failed to process project "${projectName}":`, e);
+      }
+    }
+
+    return totalRecords;
   }
 
   // Git commit tracking methods

@@ -16,8 +16,10 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const [leftFiles, setLeftFiles] = useState<FileWithDependents[]>([]);
   const [rightFiles, setRightFiles] = useState<FileWithDependents[]>([]);
   const [hoveredFile, setHoveredFile] = useState<string | null>(null);
+  const [hoveredProject, setHoveredProject] = useState<string | null>(null);
+  const [selectedItem, setSelectedItem] = useState<{ type: 'file' | 'project'; value: string } | null>(null);
   const [allDependents, setAllDependents] = useState<Map<string, string[]>>(new Map());
-  const [showOnlyWithDependents, setShowOnlyWithDependents] = useState(false);
+  const [showOnlyWithDependents, setShowOnlyWithDependents] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -28,13 +30,54 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     loadDependents();
   }, [files]);
 
+  // Handle click outside to deselect
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setSelectedItem(null);
+      }
+    };
+
+    if (selectedItem) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [selectedItem]);
+
+  // Resize SVG to cover full scrollable content so lines draw even off-screen
+  useEffect(() => {
+    const updateSvgSize = () => {
+      const svg = svgRef.current;
+      const container = containerRef.current;
+      if (!svg || !container) return;
+      const w = container.scrollWidth;
+      const h = container.scrollHeight;
+      svg.setAttribute('width', String(w));
+      svg.setAttribute('height', String(h));
+      svg.style.width = `${w}px`;
+      svg.style.height = `${h}px`;
+    };
+
+    updateSvgSize();
+    const container = containerRef.current;
+    window.addEventListener('resize', updateSvgSize);
+    if (container) container.addEventListener('scroll', updateSvgSize);
+    const obs = new MutationObserver(() => requestAnimationFrame(updateSvgSize));
+    if (container) obs.observe(container, { childList: true, subtree: true });
+    return () => {
+      window.removeEventListener('resize', updateSvgSize);
+      if (container) container.removeEventListener('scroll', updateSvgSize);
+      obs.disconnect();
+    };
+  }, [leftFiles, rightFiles, allDependents]);
+
   // Update SVG when files or hover state changes
   useEffect(() => {
     // Force re-render of SVG by updating a dummy state or using requestAnimationFrame
     if (svgRef.current && containerRef.current) {
       // SVG will re-render automatically when state changes
     }
-  }, [leftFiles, rightFiles, hoveredFile, allDependents]);
+  }, [leftFiles, rightFiles, hoveredFile, hoveredProject, selectedItem, allDependents]);
 
   const loadDependents = async () => {
     const dependentsMap = new Map<string, string[]>();
@@ -139,15 +182,11 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     const rect = fileElement.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
 
-    const x =
-      side === 'leftEdge'
-        ? rect.left - containerRect.left
-        : rect.right - containerRect.left;
+    const xBase = side === 'leftEdge' ? rect.left : rect.right;
+    const x = xBase - containerRect.left + container.scrollLeft;
+    const y = rect.top + rect.height / 2 - containerRect.top + container.scrollTop;
 
-    return {
-      x,
-      y: rect.top + rect.height / 2 - containerRect.top,
-    };
+    return { x, y };
   };
 
   const getProjectPosition = (projectName: string, side: 'left' | 'right' | 'both'): { x: number; y: number } | null => {
@@ -161,27 +200,49 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     const rect = projectElement.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
 
-    let x: number;
+    let xBase: number;
     if (side === 'left') {
-      // Project is on the left side of the container, line should leave from its right edge
-      x = rect.right - containerRect.left;
+      xBase = rect.right;
     } else if (side === 'right') {
-      // Project is on the right side of the container, line should leave from its left edge
-      x = rect.left - containerRect.left;
+      xBase = rect.left;
     } else {
-      // Project is between columns, line should start from its horizontal center
-      x = rect.left - containerRect.left + rect.width / 2;
+      xBase = rect.left + rect.width / 2;
     }
 
-    return {
-      x,
-      y: rect.top + rect.height / 2 - containerRect.top,
-    };
+    const x = xBase - containerRect.left + container.scrollLeft;
+    const y = rect.top + rect.height / 2 - containerRect.top + container.scrollTop;
+
+    return { x, y };
+  };
+
+  // Determine which file/project should be highlighted
+  const getHighlightedFile = () => selectedItem?.type === 'file' ? selectedItem.value : hoveredFile;
+  const getHighlightedProject = () => selectedItem?.type === 'project' ? selectedItem.value : hoveredProject;
+
+  // When something is selected, hover should not affect anything else
+  const shouldShowHover = (item: string, type: 'file' | 'project') => {
+    if (selectedItem) return selectedItem.type === type && selectedItem.value === item;
+    return (type === 'file' ? hoveredFile === item : hoveredProject === item);
+  };
+
+  const handleFileClick = (e: React.MouseEvent, filePath: string) => {
+    e.stopPropagation();
+    setSelectedItem({ type: 'file', value: filePath });
+  };
+
+  const handleProjectClick = (e: React.MouseEvent, project: string) => {
+    e.stopPropagation();
+    setSelectedItem({ type: 'project', value: project });
+  };
+
+  const handleContainerClick = () => {
+    setSelectedItem(null);
   };
 
   return (
     <div
       ref={containerRef}
+      onClick={handleContainerClick}
       style={{
         flex: 1,
         display: 'flex',
@@ -190,34 +251,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         gap: '24px',
       }}
     >
-      <div
-        style={{
-          position: 'absolute',
-          top: 8,
-          right: 16,
-          zIndex: 3,
-          background: 'rgba(255, 255, 255, 0.9)',
-          borderRadius: '4px',
-          padding: '4px 8px',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-        }}
-      >
-        <input
-          id="show-only-with-dependents"
-          type="checkbox"
-          checked={showOnlyWithDependents}
-          onChange={e => setShowOnlyWithDependents(e.target.checked)}
-        />
-        <label
-          htmlFor="show-only-with-dependents"
-          style={{ fontSize: '11px', cursor: 'pointer', userSelect: 'none' }}
-        >
-          Only show files with dependents
-        </label>
-      </div>
+      
 
       <svg
         ref={svgRef}
@@ -238,7 +272,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           return visibleLeftFiles.map(file => {
             const filePos = getFilePosition(file.file_path, 'leftEdge');
             if (!filePos || !file.dependents?.includes(project)) return null;
-            const isHighlighted = hoveredFile === file.file_path;
+            const isHighlighted = getHighlightedFile() === file.file_path || getHighlightedProject() === project;
             return (
               <line
                 key={`${project}-${file.file_path}`}
@@ -261,7 +295,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           return visibleRightFiles.map(file => {
             const filePos = getFilePosition(file.file_path, 'rightEdge');
             if (!filePos || !file.dependents?.includes(project)) return null;
-            const isHighlighted = hoveredFile === file.file_path;
+            const isHighlighted = getHighlightedFile() === file.file_path || getHighlightedProject() === project;
             return (
               <line
                 key={`${project}-${file.file_path}`}
@@ -288,7 +322,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
               isLeft ? 'rightEdge' : 'leftEdge'
             );
             if (!filePos || !file.dependents?.includes(project)) return null;
-            const isHighlighted = hoveredFile === file.file_path;
+            const isHighlighted = getHighlightedFile() === file.file_path || getHighlightedProject() === project;
             return (
               <line
                 key={`${project}-${file.file_path}`}
@@ -304,7 +338,6 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           });
         })}
       </svg>
-
       {/* Left dependents */}
       <div
         style={{
@@ -318,20 +351,30 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
           Left Dependents
         </h3>
-        {leftDependents.map(project => (
-          <div
-            key={project}
-            data-project-name={project}
-            style={{
-              padding: '8px',
-              background: '#f0f0f0',
-              borderRadius: '4px',
-              fontSize: '12px',
-            }}
-          >
-            {project}
-          </div>
-        ))}
+        {leftDependents.map(project => {
+          const isProjHighlighted = hoveredProject === project || (hoveredFile && allDependents.get(hoveredFile || '')?.includes(project));
+          const isSelected = selectedItem?.type === 'project' && selectedItem.value === project;
+          const isConnectedToSelectedFile = selectedItem?.type === 'file' && allDependents.get(selectedItem.value)?.includes(project);
+          const shouldHighlight = isSelected || isConnectedToSelectedFile || (!selectedItem && isProjHighlighted);
+          return (
+            <div
+              key={project}
+              data-project-name={project}
+              onClick={(e) => handleProjectClick(e, project)}
+              onMouseEnter={() => hoveredProject !== project && !selectedItem && setHoveredProject(project)}
+              onMouseLeave={() => !selectedItem && setHoveredProject(null)}
+              style={{
+                padding: '8px',
+                background: shouldHighlight ? '#e3f2fd' : '#f0f0f0',
+                borderRadius: '4px',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              {project}
+            </div>
+          );
+        })}
       </div>
 
       {/* Left column */}
@@ -348,15 +391,20 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
           Left Column ({visibleLeftFiles.length})
         </h3>
-        {visibleLeftFiles.map(file => (
+        {visibleLeftFiles.map(file => {
+          const isFileSelected = selectedItem?.type === 'file' && selectedItem.value === file.file_path;
+          const isConnectedToSelectedProject = selectedItem?.type === 'project' && file.dependents?.includes(selectedItem.value);
+          const isFileHovered = !selectedItem && (hoveredFile === file.file_path || (hoveredProject && file.dependents?.includes(hoveredProject)));
+          return (
           <div
             key={file.file_path}
             data-file-path={file.file_path}
-            onMouseEnter={() => setHoveredFile(file.file_path)}
-            onMouseLeave={() => setHoveredFile(null)}
+            onClick={(e) => handleFileClick(e, file.file_path)}
+            onMouseEnter={() => file.file_path !== hoveredFile && !selectedItem && setHoveredFile(file.file_path)}
+            onMouseLeave={() => !selectedItem && setHoveredFile(null)}
             style={{
               padding: '8px',
-              background: hoveredFile === file.file_path ? '#e3f2fd' : '#fff',
+              background: isFileSelected || isConnectedToSelectedProject || isFileHovered ? '#e3f2fd' : '#fff',
               border: '1px solid #ddd',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -373,7 +421,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
               →
             </button>
           </div>
-        ))}
+        ); })}
       </div>
 
       {/* Both dependents (between columns) */}
@@ -390,20 +438,30 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
             Both Columns
           </h3>
-          {bothDependents.map(project => (
-            <div
-              key={project}
-              data-project-name={project}
-              style={{
-                padding: '8px',
-                background: '#fff3cd',
-                borderRadius: '4px',
-                fontSize: '12px',
-              }}
-            >
-              {project}
-            </div>
-          ))}
+          {bothDependents.map(project => {
+            const isProjHighlighted = hoveredProject === project || (hoveredFile && allDependents.get(hoveredFile || '')?.includes(project));
+            const isSelected = selectedItem?.type === 'project' && selectedItem.value === project;
+            const isConnectedToSelectedFile = selectedItem?.type === 'file' && allDependents.get(selectedItem.value)?.includes(project);
+            const shouldHighlight = isSelected || isConnectedToSelectedFile || (!selectedItem && isProjHighlighted);
+            return (
+              <div
+                key={project}
+                data-project-name={project}
+                onClick={(e) => handleProjectClick(e, project)}
+                onMouseEnter={() => hoveredProject !== project && !selectedItem && setHoveredProject(project)}
+                onMouseLeave={() => !selectedItem && setHoveredProject(null)}
+                style={{
+                  padding: '8px',
+                  background: shouldHighlight ? '#e3f2fd' : '#fff3cd',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                }}
+              >
+                {project}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -421,15 +479,20 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
           Right Column ({visibleRightFiles.length})
         </h3>
-        {visibleRightFiles.map(file => (
+        {visibleRightFiles.map(file => {
+          const isFileSelected = selectedItem?.type === 'file' && selectedItem.value === file.file_path;
+          const isConnectedToSelectedProject = selectedItem?.type === 'project' && file.dependents?.includes(selectedItem.value);
+          const isFileHovered = !selectedItem && (hoveredFile === file.file_path || (hoveredProject && file.dependents?.includes(hoveredProject)));
+          return (
           <div
             key={file.file_path}
             data-file-path={file.file_path}
-            onMouseEnter={() => setHoveredFile(file.file_path)}
-            onMouseLeave={() => setHoveredFile(null)}
+            onClick={(e) => handleFileClick(e, file.file_path)}
+            onMouseEnter={() => file.file_path !== hoveredFile && !selectedItem && setHoveredFile(file.file_path)}
+            onMouseLeave={() => !selectedItem && setHoveredFile(null)}
             style={{
               padding: '8px',
-              background: hoveredFile === file.file_path ? '#e3f2fd' : '#fff',
+              background: isFileSelected || isConnectedToSelectedProject || isFileHovered ? '#e3f2fd' : '#fff',
               border: '1px solid #ddd',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -448,7 +511,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
               {file.file_path}
             </span>
           </div>
-        ))}
+        ); })}
       </div>
 
       {/* Right dependents */}
@@ -461,23 +524,47 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           zIndex: 2,
         }}
       >
+        <div style={{ padding: '4px 0' }}>
+          <input
+            id="show-only-with-dependents"
+            type="checkbox"
+            checked={showOnlyWithDependents}
+            onChange={e => setShowOnlyWithDependents(e.target.checked)}
+          />
+          <label
+            htmlFor="show-only-with-dependents"
+            style={{ marginLeft: 6, fontSize: '11px', cursor: 'pointer', userSelect: 'none' }}
+          >
+            Only show files with dependents
+          </label>
+        </div>
         <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
           Right Dependents
         </h3>
-        {rightDependents.map(project => (
-          <div
-            key={project}
-            data-project-name={project}
-            style={{
-              padding: '8px',
-              background: '#f0f0f0',
-              borderRadius: '4px',
-              fontSize: '12px',
-            }}
-          >
-            {project}
-          </div>
-        ))}
+        {rightDependents.map(project => {
+          const isProjHighlighted = hoveredProject === project || (hoveredFile && allDependents.get(hoveredFile || '')?.includes(project));
+          const isSelected = selectedItem?.type === 'project' && selectedItem.value === project;
+          const isConnectedToSelectedFile = selectedItem?.type === 'file' && allDependents.get(selectedItem.value)?.includes(project);
+          const shouldHighlight = isSelected || isConnectedToSelectedFile || (!selectedItem && isProjHighlighted);
+          return (
+            <div
+              key={project}
+              data-project-name={project}
+              onClick={(e) => handleProjectClick(e, project)}
+              onMouseEnter={() => hoveredProject !== project && !selectedItem && setHoveredProject(project)}
+              onMouseLeave={() => !selectedItem && setHoveredProject(null)}
+              style={{
+                padding: '8px',
+                background: shouldHighlight ? '#e3f2fd' : '#f0f0f0',
+                borderRadius: '4px',
+                fontSize: '12px',
+                cursor: 'pointer',
+              }}
+            >
+              {project}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

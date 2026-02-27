@@ -19,9 +19,12 @@
     }
   },
   "dependencies": {
-    "tslib": "^2.3.0",
-    "sqlite3": "^5.1.6",
     "@nx/devkit": "^21.6.3",
+    "next": "^14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sqlite3": "^5.1.7",
+    "tslib": "^2.3.0",
     "typescript": "^5.0.0"
   },
   "devDependencies": {
@@ -37,7 +40,7 @@
         "dependsOn": ["build", "project-view:build"],
         "options": {
           "cwd": "{workspaceRoot}",
-          "command": "cp -r apps/project-view/.next packages/analyze/dist"
+          "command": "cp -r apps/project-view/.next packages/analyze/dist/"
         }
       },
       "start": {
