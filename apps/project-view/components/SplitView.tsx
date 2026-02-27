@@ -20,6 +20,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const [selectedItem, setSelectedItem] = useState<{ type: 'file' | 'project'; value: string } | null>(null);
   const [allDependents, setAllDependents] = useState<Map<string, string[]>>(new Map());
   const [showOnlyWithDependents, setShowOnlyWithDependents] = useState(true);
+  const [svgUpdateKey, setSvgUpdateKey] = useState(0);
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -71,13 +72,13 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     };
   }, [leftFiles, rightFiles, allDependents]);
 
-  // Update SVG when files or hover state changes
+  // Force SVG to recalculate line positions after DOM has been updated
   useEffect(() => {
-    // Force re-render of SVG by updating a dummy state or using requestAnimationFrame
-    if (svgRef.current && containerRef.current) {
-      // SVG will re-render automatically when state changes
-    }
-  }, [leftFiles, rightFiles, hoveredFile, hoveredProject, selectedItem, allDependents]);
+    const timer = requestAnimationFrame(() => {
+      setSvgUpdateKey(prev => prev + 1);
+    });
+    return () => cancelAnimationFrame(timer);
+  }, [leftFiles, rightFiles]);
 
   const loadDependents = async () => {
     const dependentsMap = new Map<string, string[]>();
@@ -278,6 +279,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
       
 
       <svg
+        key={svgUpdateKey}
         ref={svgRef}
         style={{
           position: 'absolute',
