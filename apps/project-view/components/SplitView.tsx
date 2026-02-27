@@ -6,19 +6,31 @@ import type { ProjectFile } from '@/lib/db';
 interface SplitViewProps {
   files: ProjectFile[];
   projectName: string;
+  leftFiles?: ProjectFile[];
+  rightFiles?: ProjectFile[];
 }
 
 interface FileWithDependents extends ProjectFile {
   dependents?: string[];
 }
 
-export default function SplitView({ files, projectName }: SplitViewProps) {
+export default function SplitView({
+  files,
+  projectName,
+  leftFiles: initialLeftFiles,
+  rightFiles: initialRightFiles,
+}: SplitViewProps) {
   const [leftFiles, setLeftFiles] = useState<FileWithDependents[]>([]);
   const [rightFiles, setRightFiles] = useState<FileWithDependents[]>([]);
   const [hoveredFile, setHoveredFile] = useState<string | null>(null);
   const [hoveredProject, setHoveredProject] = useState<string | null>(null);
-  const [selectedItem, setSelectedItem] = useState<{ type: 'file' | 'project'; value: string } | null>(null);
-  const [allDependents, setAllDependents] = useState<Map<string, string[]>>(new Map());
+  const [selectedItem, setSelectedItem] = useState<{
+    type: 'file' | 'project';
+    value: string;
+  } | null>(null);
+  const [allDependents, setAllDependents] = useState<Map<string, string[]>>(
+    new Map()
+  );
   const [showOnlyWithDependents, setShowOnlyWithDependents] = useState(true);
   const [svgUpdateKey, setSvgUpdateKey] = useState(0);
   const [leftEstimatedLoad, setLeftEstimatedLoad] = useState<number>(0);
@@ -27,16 +39,46 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Initialize: put all files in left column
-    setLeftFiles(files.map(f => ({ ...f })));
-    setRightFiles([]);
+    // Initialize columns using optional suggested split when provided
+    const hasInitialSplit =
+      (initialLeftFiles && initialLeftFiles.length > 0) ||
+      (initialRightFiles && initialRightFiles.length > 0);
+
+    if (hasInitialSplit) {
+      const leftSet = new Set((initialLeftFiles ?? []).map((f) => f.file_path));
+      const rightSet = new Set(
+        (initialRightFiles ?? []).map((f) => f.file_path)
+      );
+
+      // Ensure every file appears in at least one column
+      const remainingFiles = files.filter(
+        (f) => !leftSet.has(f.file_path) && !rightSet.has(f.file_path)
+      );
+
+      const nextLeftFiles: ProjectFile[] = [
+        ...(initialLeftFiles ?? []),
+        ...remainingFiles,
+      ];
+      const nextRightFiles: ProjectFile[] = initialRightFiles ?? [];
+
+      setLeftFiles(nextLeftFiles.map((f) => ({ ...f })));
+      setRightFiles(nextRightFiles.map((f) => ({ ...f })));
+    } else {
+      // Default: put all files in left column
+      setLeftFiles(files.map((f) => ({ ...f })));
+      setRightFiles([]);
+    }
+
     loadDependents();
-  }, [files]);
+  }, [files, initialLeftFiles, initialRightFiles]);
 
   // Handle click outside to deselect
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setSelectedItem(null);
       }
     };
@@ -65,7 +107,9 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     const container = containerRef.current;
     window.addEventListener('resize', updateSvgSize);
     if (container) container.addEventListener('scroll', updateSvgSize);
-    const obs = new MutationObserver(() => requestAnimationFrame(updateSvgSize));
+    const obs = new MutationObserver(() =>
+      requestAnimationFrame(updateSvgSize)
+    );
     if (container) obs.observe(container, { childList: true, subtree: true });
     return () => {
       window.removeEventListener('resize', updateSvgSize);
@@ -77,35 +121,39 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   // Force SVG to recalculate line positions after DOM has been updated
   useEffect(() => {
     const timer = requestAnimationFrame(() => {
-      setSvgUpdateKey(prev => prev + 1);
+      setSvgUpdateKey((prev) => prev + 1);
     });
     return () => cancelAnimationFrame(timer);
   }, [leftFiles, rightFiles]);
 
   const loadDependents = async () => {
     try {
-      const filePaths = files.map(f => f.file_path);
+      const filePaths = files.map((f) => f.file_path);
       if (filePaths.length === 0) return;
 
       const query = new URLSearchParams();
-      filePaths.forEach(fp => query.append('filePaths[]', fp));
-      
+      filePaths.forEach((fp) => query.append('filePaths[]', fp));
+
       const response = await fetch(
         `/api/project-dependency-map-for-files?${query.toString()}`
       );
       if (response.ok) {
         const dependentsMap: Record<string, string[]> = await response.json();
         setAllDependents(new Map(Object.entries(dependentsMap)));
-        
+
         // Update files with dependents
-        setLeftFiles(prev => prev.map(f => ({
-          ...f,
-          dependents: dependentsMap[f.file_path] || []
-        })));
-        setRightFiles(prev => prev.map(f => ({
-          ...f,
-          dependents: dependentsMap[f.file_path] || []
-        })));
+        setLeftFiles((prev) =>
+          prev.map((f) => ({
+            ...f,
+            dependents: dependentsMap[f.file_path] || [],
+          }))
+        );
+        setRightFiles((prev) =>
+          prev.map((f) => ({
+            ...f,
+            dependents: dependentsMap[f.file_path] || [],
+          }))
+        );
       }
     } catch (error) {
       console.error('Error loading dependents:', error);
@@ -116,11 +164,9 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     if (filePaths.length === 0) return 0;
     try {
       const query = new URLSearchParams();
-      filePaths.forEach(fp => query.append('filePaths[]', fp));
-      
-      const response = await fetch(
-        `/api/estimated-load?${query.toString()}`
-      );
+      filePaths.forEach((fp) => query.append('filePaths[]', fp));
+
+      const response = await fetch(`/api/estimated-load?${query.toString()}`);
       if (response.ok) {
         const data = await response.json();
         return data.estimatedLoad || 0;
@@ -134,7 +180,7 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   // Update left estimated load when leftFiles change
   useEffect(() => {
     const updateLeftLoad = async () => {
-      const load = await fetchEstimatedLoad(leftFiles.map(f => f.file_path));
+      const load = await fetchEstimatedLoad(leftFiles.map((f) => f.file_path));
       setLeftEstimatedLoad(load);
     };
     updateLeftLoad();
@@ -143,49 +189,67 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   // Update right estimated load when rightFiles change
   useEffect(() => {
     const updateRightLoad = async () => {
-      const load = await fetchEstimatedLoad(rightFiles.map(f => f.file_path));
+      const load = await fetchEstimatedLoad(rightFiles.map((f) => f.file_path));
       setRightEstimatedLoad(load);
     };
     updateRightLoad();
   }, [rightFiles]);
 
   const moveToRight = (filePath: string) => {
-    const file = leftFiles.find(f => f.file_path === filePath);
+    const file = leftFiles.find((f) => f.file_path === filePath);
     if (file) {
-      setLeftFiles(prev => prev.filter(f => f.file_path !== filePath));
-      setRightFiles(prev => [...prev, { ...file, dependents: allDependents.get(filePath) || [] }]);
+      setLeftFiles((prev) => prev.filter((f) => f.file_path !== filePath));
+      setRightFiles((prev) => [
+        ...prev,
+        { ...file, dependents: allDependents.get(filePath) || [] },
+      ]);
     }
   };
 
   const moveToLeft = (filePath: string) => {
-    const file = rightFiles.find(f => f.file_path === filePath);
+    const file = rightFiles.find((f) => f.file_path === filePath);
     if (file) {
-      setRightFiles(prev => prev.filter(f => f.file_path !== filePath));
-      setLeftFiles(prev => [...prev, { ...file, dependents: allDependents.get(filePath) || [] }]);
+      setRightFiles((prev) => prev.filter((f) => f.file_path !== filePath));
+      setLeftFiles((prev) => [
+        ...prev,
+        { ...file, dependents: allDependents.get(filePath) || [] },
+      ]);
     }
   };
 
   const moveAllFilesFromProjectToRight = (project: string) => {
     // Get all files currently in left column that are connected to this project
-    const filesToMove = leftFiles.filter(f => f.dependents?.includes(project));
-    
+    const filesToMove = leftFiles.filter((f) =>
+      f.dependents?.includes(project)
+    );
+
     // Remove them from left and add to right
-    setLeftFiles(prev => prev.filter(f => !filesToMove.some(tm => tm.file_path === f.file_path)));
-    setRightFiles(prev => [
+    setLeftFiles((prev) =>
+      prev.filter(
+        (f) => !filesToMove.some((tm) => tm.file_path === f.file_path)
+      )
+    );
+    setRightFiles((prev) => [
       ...prev,
-      ...filesToMove.map(f => ({ ...f, dependents: f.dependents }))
+      ...filesToMove.map((f) => ({ ...f, dependents: f.dependents })),
     ]);
   };
 
   const moveAllFilesFromProjectToLeft = (project: string) => {
     // Get all files currently in right column that are connected to this project
-    const filesToMove = rightFiles.filter(f => f.dependents?.includes(project));
-    
+    const filesToMove = rightFiles.filter((f) =>
+      f.dependents?.includes(project)
+    );
+
     // Remove them from right and add to left
-    setRightFiles(prev => prev.filter(f => !filesToMove.some(tm => tm.file_path === f.file_path)));
-    setLeftFiles(prev => [
+    setRightFiles((prev) =>
+      prev.filter(
+        (f) => !filesToMove.some((tm) => tm.file_path === f.file_path)
+      )
+    );
+    setLeftFiles((prev) => [
       ...prev,
-      ...filesToMove.map(f => ({ ...f, dependents: f.dependents }))
+      ...filesToMove.map((f) => ({ ...f, dependents: f.dependents })),
     ]);
   };
 
@@ -193,10 +257,10 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const getLeftDependents = () => {
     const projects = new Set<string>();
     const source = showOnlyWithDependents
-      ? leftFiles.filter(f => (f.dependents?.length || 0) > 0)
+      ? leftFiles.filter((f) => (f.dependents?.length || 0) > 0)
       : leftFiles;
-    source.forEach(file => {
-      (file.dependents || []).forEach(proj => projects.add(proj));
+    source.forEach((file) => {
+      (file.dependents || []).forEach((proj) => projects.add(proj));
     });
     return Array.from(projects);
   };
@@ -204,10 +268,10 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
   const getRightDependents = () => {
     const projects = new Set<string>();
     const source = showOnlyWithDependents
-      ? rightFiles.filter(f => (f.dependents?.length || 0) > 0)
+      ? rightFiles.filter((f) => (f.dependents?.length || 0) > 0)
       : rightFiles;
-    source.forEach(file => {
-      (file.dependents || []).forEach(proj => projects.add(proj));
+    source.forEach((file) => {
+      (file.dependents || []).forEach((proj) => projects.add(proj));
     });
     return Array.from(projects);
   };
@@ -216,21 +280,25 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     const left = new Set(getLeftDependents());
     const right = new Set(getRightDependents());
     const both = new Set<string>();
-    left.forEach(proj => {
+    left.forEach((proj) => {
       if (right.has(proj)) both.add(proj);
     });
     return Array.from(both);
   };
 
-  const leftDependents = getLeftDependents().filter(p => !getBothDependents().includes(p));
-  const rightDependents = getRightDependents().filter(p => !getBothDependents().includes(p));
+  const leftDependents = getLeftDependents().filter(
+    (p) => !getBothDependents().includes(p)
+  );
+  const rightDependents = getRightDependents().filter(
+    (p) => !getBothDependents().includes(p)
+  );
   const bothDependents = getBothDependents();
 
   const visibleLeftFiles = showOnlyWithDependents
-    ? leftFiles.filter(f => (f.dependents?.length || 0) > 0)
+    ? leftFiles.filter((f) => (f.dependents?.length || 0) > 0)
     : leftFiles;
   const visibleRightFiles = showOnlyWithDependents
-    ? rightFiles.filter(f => (f.dependents?.length || 0) > 0)
+    ? rightFiles.filter((f) => (f.dependents?.length || 0) > 0)
     : rightFiles;
 
   // Calculate positions for drawing lines
@@ -244,25 +312,29 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
       `[data-file-path="${CSS.escape(filePath)}"]`
     ) as HTMLElement;
     if (!fileElement) return null;
-    
+
     const rect = fileElement.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
 
     const xBase = side === 'leftEdge' ? rect.left : rect.right;
     const x = xBase - containerRect.left + container.scrollLeft;
-    const y = rect.top + rect.height / 2 - containerRect.top + container.scrollTop;
+    const y =
+      rect.top + rect.height / 2 - containerRect.top + container.scrollTop;
 
     return { x, y };
   };
 
-  const getProjectPosition = (projectName: string, side: 'left' | 'right' | 'both'): { x: number; y: number } | null => {
+  const getProjectPosition = (
+    projectName: string,
+    side: 'left' | 'right' | 'both'
+  ): { x: number; y: number } | null => {
     if (!containerRef.current) return null;
     const container = containerRef.current;
     const projectElement = container.querySelector(
       `[data-project-name="${CSS.escape(projectName)}"]`
     ) as HTMLElement;
     if (!projectElement) return null;
-    
+
     const rect = projectElement.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
 
@@ -276,19 +348,23 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     }
 
     const x = xBase - containerRect.left + container.scrollLeft;
-    const y = rect.top + rect.height / 2 - containerRect.top + container.scrollTop;
+    const y =
+      rect.top + rect.height / 2 - containerRect.top + container.scrollTop;
 
     return { x, y };
   };
 
   // Determine which file/project should be highlighted
-  const getHighlightedFile = () => selectedItem?.type === 'file' ? selectedItem.value : hoveredFile;
-  const getHighlightedProject = () => selectedItem?.type === 'project' ? selectedItem.value : hoveredProject;
+  const getHighlightedFile = () =>
+    selectedItem?.type === 'file' ? selectedItem.value : hoveredFile;
+  const getHighlightedProject = () =>
+    selectedItem?.type === 'project' ? selectedItem.value : hoveredProject;
 
   // When something is selected, hover should not affect anything else
   const shouldShowHover = (item: string, type: 'file' | 'project') => {
-    if (selectedItem) return selectedItem.type === type && selectedItem.value === item;
-    return (type === 'file' ? hoveredFile === item : hoveredProject === item);
+    if (selectedItem)
+      return selectedItem.type === type && selectedItem.value === item;
+    return type === 'file' ? hoveredFile === item : hoveredProject === item;
   };
 
   const handleFileClick = (e: React.MouseEvent, filePath: string) => {
@@ -317,8 +393,6 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         gap: '24px',
       }}
     >
-      
-
       <svg
         key={svgUpdateKey}
         ref={svgRef}
@@ -333,13 +407,15 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         }}
       >
         {/* Draw lines from left dependents to left files */}
-        {leftDependents.map(project => {
+        {leftDependents.map((project) => {
           const projPos = getProjectPosition(project, 'left');
           if (!projPos) return null;
-          return visibleLeftFiles.map(file => {
+          return visibleLeftFiles.map((file) => {
             const filePos = getFilePosition(file.file_path, 'leftEdge');
             if (!filePos || !file.dependents?.includes(project)) return null;
-            const isHighlighted = getHighlightedFile() === file.file_path || getHighlightedProject() === project;
+            const isHighlighted =
+              getHighlightedFile() === file.file_path ||
+              getHighlightedProject() === project;
             return (
               <line
                 key={`${project}-${file.file_path}`}
@@ -356,13 +432,15 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         })}
 
         {/* Draw lines from right dependents to right files */}
-        {rightDependents.map(project => {
+        {rightDependents.map((project) => {
           const projPos = getProjectPosition(project, 'right');
           if (!projPos) return null;
-          return visibleRightFiles.map(file => {
+          return visibleRightFiles.map((file) => {
             const filePos = getFilePosition(file.file_path, 'rightEdge');
             if (!filePos || !file.dependents?.includes(project)) return null;
-            const isHighlighted = getHighlightedFile() === file.file_path || getHighlightedProject() === project;
+            const isHighlighted =
+              getHighlightedFile() === file.file_path ||
+              getHighlightedProject() === project;
             return (
               <line
                 key={`${project}-${file.file_path}`}
@@ -379,17 +457,21 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         })}
 
         {/* Draw lines from both dependents to files in both columns */}
-        {bothDependents.map(project => {
+        {bothDependents.map((project) => {
           const projPos = getProjectPosition(project, 'both');
           if (!projPos) return null;
-          return [...visibleLeftFiles, ...visibleRightFiles].map(file => {
-            const isLeft = visibleLeftFiles.some(f => f.file_path === file.file_path);
+          return [...visibleLeftFiles, ...visibleRightFiles].map((file) => {
+            const isLeft = visibleLeftFiles.some(
+              (f) => f.file_path === file.file_path
+            );
             const filePos = getFilePosition(
               file.file_path,
               isLeft ? 'rightEdge' : 'leftEdge'
             );
             if (!filePos || !file.dependents?.includes(project)) return null;
-            const isHighlighted = getHighlightedFile() === file.file_path || getHighlightedProject() === project;
+            const isHighlighted =
+              getHighlightedFile() === file.file_path ||
+              getHighlightedProject() === project;
             return (
               <line
                 key={`${project}-${file.file_path}`}
@@ -415,20 +497,35 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
           zIndex: 2,
         }}
       >
-        <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+        <h3
+          style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}
+        >
           Left Dependents
         </h3>
-        {leftDependents.map(project => {
-          const isProjHighlighted = hoveredProject === project || (hoveredFile && allDependents.get(hoveredFile || '')?.includes(project));
-          const isSelected = selectedItem?.type === 'project' && selectedItem.value === project;
-          const isConnectedToSelectedFile = selectedItem?.type === 'file' && allDependents.get(selectedItem.value)?.includes(project);
-          const shouldHighlight = isSelected || isConnectedToSelectedFile || (!selectedItem && isProjHighlighted);
+        {leftDependents.map((project) => {
+          const isProjHighlighted =
+            hoveredProject === project ||
+            (hoveredFile &&
+              allDependents.get(hoveredFile || '')?.includes(project));
+          const isSelected =
+            selectedItem?.type === 'project' && selectedItem.value === project;
+          const isConnectedToSelectedFile =
+            selectedItem?.type === 'file' &&
+            allDependents.get(selectedItem.value)?.includes(project);
+          const shouldHighlight =
+            isSelected ||
+            isConnectedToSelectedFile ||
+            (!selectedItem && isProjHighlighted);
           return (
             <div
               key={project}
               data-project-name={project}
               onClick={(e) => handleProjectClick(e, project)}
-              onMouseEnter={() => hoveredProject !== project && !selectedItem && setHoveredProject(project)}
+              onMouseEnter={() =>
+                hoveredProject !== project &&
+                !selectedItem &&
+                setHoveredProject(project)
+              }
               onMouseLeave={() => !selectedItem && setHoveredProject(null)}
               style={{
                 padding: '8px',
@@ -448,7 +545,11 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
                   e.stopPropagation();
                   moveAllFilesFromProjectToRight(project);
                 }}
-                style={{ padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  whiteSpace: 'nowrap',
+                }}
                 title={`Move all files connected to ${project} to the right`}
               >
                 →
@@ -470,44 +571,65 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         }}
       >
         <div>
-          <h3 style={{ marginBottom: '4px', fontSize: '14px', fontWeight: '600' }}>
+          <h3
+            style={{ marginBottom: '4px', fontSize: '14px', fontWeight: '600' }}
+          >
             Left Column ({visibleLeftFiles.length})
           </h3>
           <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#666' }}>
             Estimated Load: {leftEstimatedLoad}
           </p>
         </div>
-        {visibleLeftFiles.map(file => {
-          const isFileSelected = selectedItem?.type === 'file' && selectedItem.value === file.file_path;
-          const isConnectedToSelectedProject = selectedItem?.type === 'project' && file.dependents?.includes(selectedItem.value);
-          const isFileHovered = !selectedItem && (hoveredFile === file.file_path || (hoveredProject && file.dependents?.includes(hoveredProject)));
+        {visibleLeftFiles.map((file) => {
+          const isFileSelected =
+            selectedItem?.type === 'file' &&
+            selectedItem.value === file.file_path;
+          const isConnectedToSelectedProject =
+            selectedItem?.type === 'project' &&
+            file.dependents?.includes(selectedItem.value);
+          const isFileHovered =
+            !selectedItem &&
+            (hoveredFile === file.file_path ||
+              (hoveredProject && file.dependents?.includes(hoveredProject)));
           return (
-          <div
-            key={file.file_path}
-            data-file-path={file.file_path}
-            onClick={(e) => handleFileClick(e, file.file_path)}
-            onMouseEnter={() => file.file_path !== hoveredFile && !selectedItem && setHoveredFile(file.file_path)}
-            onMouseLeave={() => !selectedItem && setHoveredFile(null)}
-            style={{
-              padding: '8px',
-              background: isFileSelected || isConnectedToSelectedProject || isFileHovered ? '#e3f2fd' : '#fff',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <span style={{ fontSize: '12px', flex: 1 }}>{file.file_path}</span>
-            <button
-              onClick={() => moveToRight(file.file_path)}
-              style={{ padding: '4px 8px', fontSize: '11px' }}
+            <div
+              key={file.file_path}
+              data-file-path={file.file_path}
+              onClick={(e) => handleFileClick(e, file.file_path)}
+              onMouseEnter={() =>
+                file.file_path !== hoveredFile &&
+                !selectedItem &&
+                setHoveredFile(file.file_path)
+              }
+              onMouseLeave={() => !selectedItem && setHoveredFile(null)}
+              style={{
+                padding: '8px',
+                background:
+                  isFileSelected ||
+                  isConnectedToSelectedProject ||
+                  isFileHovered
+                    ? '#e3f2fd'
+                    : '#fff',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
             >
-              →
-            </button>
-          </div>
-        ); })}
+              <span style={{ fontSize: '12px', flex: 1 }}>
+                {file.file_path}
+              </span>
+              <button
+                onClick={() => moveToRight(file.file_path)}
+                style={{ padding: '4px 8px', fontSize: '11px' }}
+              >
+                →
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       {/* Both dependents (between columns) */}
@@ -521,20 +643,36 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
             zIndex: 2,
           }}
         >
-          <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+          <h3
+            style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}
+          >
             Both Columns
           </h3>
-          {bothDependents.map(project => {
-            const isProjHighlighted = hoveredProject === project || (hoveredFile && allDependents.get(hoveredFile || '')?.includes(project));
-            const isSelected = selectedItem?.type === 'project' && selectedItem.value === project;
-            const isConnectedToSelectedFile = selectedItem?.type === 'file' && allDependents.get(selectedItem.value)?.includes(project);
-            const shouldHighlight = isSelected || isConnectedToSelectedFile || (!selectedItem && isProjHighlighted);
+          {bothDependents.map((project) => {
+            const isProjHighlighted =
+              hoveredProject === project ||
+              (hoveredFile &&
+                allDependents.get(hoveredFile || '')?.includes(project));
+            const isSelected =
+              selectedItem?.type === 'project' &&
+              selectedItem.value === project;
+            const isConnectedToSelectedFile =
+              selectedItem?.type === 'file' &&
+              allDependents.get(selectedItem.value)?.includes(project);
+            const shouldHighlight =
+              isSelected ||
+              isConnectedToSelectedFile ||
+              (!selectedItem && isProjHighlighted);
             return (
               <div
                 key={project}
                 data-project-name={project}
                 onClick={(e) => handleProjectClick(e, project)}
-                onMouseEnter={() => hoveredProject !== project && !selectedItem && setHoveredProject(project)}
+                onMouseEnter={() =>
+                  hoveredProject !== project &&
+                  !selectedItem &&
+                  setHoveredProject(project)
+                }
                 onMouseLeave={() => !selectedItem && setHoveredProject(null)}
                 style={{
                   padding: '8px',
@@ -588,46 +726,65 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
         }}
       >
         <div>
-          <h3 style={{ marginBottom: '4px', fontSize: '14px', fontWeight: '600' }}>
+          <h3
+            style={{ marginBottom: '4px', fontSize: '14px', fontWeight: '600' }}
+          >
             Right Column ({visibleRightFiles.length})
           </h3>
           <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#666' }}>
             Estimated Load: {rightEstimatedLoad}
           </p>
         </div>
-        {visibleRightFiles.map(file => {
-          const isFileSelected = selectedItem?.type === 'file' && selectedItem.value === file.file_path;
-          const isConnectedToSelectedProject = selectedItem?.type === 'project' && file.dependents?.includes(selectedItem.value);
-          const isFileHovered = !selectedItem && (hoveredFile === file.file_path || (hoveredProject && file.dependents?.includes(hoveredProject)));
+        {visibleRightFiles.map((file) => {
+          const isFileSelected =
+            selectedItem?.type === 'file' &&
+            selectedItem.value === file.file_path;
+          const isConnectedToSelectedProject =
+            selectedItem?.type === 'project' &&
+            file.dependents?.includes(selectedItem.value);
+          const isFileHovered =
+            !selectedItem &&
+            (hoveredFile === file.file_path ||
+              (hoveredProject && file.dependents?.includes(hoveredProject)));
           return (
-          <div
-            key={file.file_path}
-            data-file-path={file.file_path}
-            onClick={(e) => handleFileClick(e, file.file_path)}
-            onMouseEnter={() => file.file_path !== hoveredFile && !selectedItem && setHoveredFile(file.file_path)}
-            onMouseLeave={() => !selectedItem && setHoveredFile(null)}
-            style={{
-              padding: '8px',
-              background: isFileSelected || isConnectedToSelectedProject || isFileHovered ? '#e3f2fd' : '#fff',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <button
-              onClick={() => moveToLeft(file.file_path)}
-              style={{ padding: '4px 8px', fontSize: '11px' }}
+            <div
+              key={file.file_path}
+              data-file-path={file.file_path}
+              onClick={(e) => handleFileClick(e, file.file_path)}
+              onMouseEnter={() =>
+                file.file_path !== hoveredFile &&
+                !selectedItem &&
+                setHoveredFile(file.file_path)
+              }
+              onMouseLeave={() => !selectedItem && setHoveredFile(null)}
+              style={{
+                padding: '8px',
+                background:
+                  isFileSelected ||
+                  isConnectedToSelectedProject ||
+                  isFileHovered
+                    ? '#e3f2fd'
+                    : '#fff',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
             >
-              ←
-            </button>
-            <span style={{ fontSize: '12px', flex: 1, textAlign: 'right' }}>
-              {file.file_path}
-            </span>
-          </div>
-        ); })}
+              <button
+                onClick={() => moveToLeft(file.file_path)}
+                style={{ padding: '4px 8px', fontSize: '11px' }}
+              >
+                ←
+              </button>
+              <span style={{ fontSize: '12px', flex: 1, textAlign: 'right' }}>
+                {file.file_path}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* Right dependents */}
@@ -645,29 +802,49 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
             id="show-only-with-dependents"
             type="checkbox"
             checked={showOnlyWithDependents}
-            onChange={e => setShowOnlyWithDependents(e.target.checked)}
+            onChange={(e) => setShowOnlyWithDependents(e.target.checked)}
           />
           <label
             htmlFor="show-only-with-dependents"
-            style={{ marginLeft: 6, fontSize: '11px', cursor: 'pointer', userSelect: 'none' }}
+            style={{
+              marginLeft: 6,
+              fontSize: '11px',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
           >
             Only show files with dependents
           </label>
         </div>
-        <h3 style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+        <h3
+          style={{ marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}
+        >
           Right Dependents
         </h3>
-        {rightDependents.map(project => {
-          const isProjHighlighted = hoveredProject === project || (hoveredFile && allDependents.get(hoveredFile || '')?.includes(project));
-          const isSelected = selectedItem?.type === 'project' && selectedItem.value === project;
-          const isConnectedToSelectedFile = selectedItem?.type === 'file' && allDependents.get(selectedItem.value)?.includes(project);
-          const shouldHighlight = isSelected || isConnectedToSelectedFile || (!selectedItem && isProjHighlighted);
+        {rightDependents.map((project) => {
+          const isProjHighlighted =
+            hoveredProject === project ||
+            (hoveredFile &&
+              allDependents.get(hoveredFile || '')?.includes(project));
+          const isSelected =
+            selectedItem?.type === 'project' && selectedItem.value === project;
+          const isConnectedToSelectedFile =
+            selectedItem?.type === 'file' &&
+            allDependents.get(selectedItem.value)?.includes(project);
+          const shouldHighlight =
+            isSelected ||
+            isConnectedToSelectedFile ||
+            (!selectedItem && isProjHighlighted);
           return (
             <div
               key={project}
               data-project-name={project}
               onClick={(e) => handleProjectClick(e, project)}
-              onMouseEnter={() => hoveredProject !== project && !selectedItem && setHoveredProject(project)}
+              onMouseEnter={() =>
+                hoveredProject !== project &&
+                !selectedItem &&
+                setHoveredProject(project)
+              }
               onMouseLeave={() => !selectedItem && setHoveredProject(null)}
               style={{
                 padding: '8px',
@@ -686,7 +863,11 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
                   e.stopPropagation();
                   moveAllFilesFromProjectToLeft(project);
                 }}
-                style={{ padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  whiteSpace: 'nowrap',
+                }}
                 title={`Move all files connected to ${project} to the left`}
               >
                 ←

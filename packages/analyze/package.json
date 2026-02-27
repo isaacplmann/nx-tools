@@ -38,6 +38,7 @@
     "targets": {
       "package": {
         "dependsOn": ["build", "project-view:build"],
+        "executor": "nx:run-commands",
         "options": {
           "cwd": "{workspaceRoot}",
           "command": "cp -r apps/project-view/.next packages/analyze/dist/"

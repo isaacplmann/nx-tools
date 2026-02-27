@@ -10,6 +10,12 @@ export default function SplitPage() {
   const router = useRouter();
   const projectName = decodeURIComponent(params.projectName as string);
   const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [leftFiles, setLeftFiles] = useState<ProjectFile[] | undefined>(
+    undefined
+  );
+  const [rightFiles, setRightFiles] = useState<ProjectFile[] | undefined>(
+    undefined
+  );
   const [projectMetrics, setProjectMetrics] = useState<ProjectMetrics | null>(
     null
   );
@@ -29,13 +35,37 @@ export default function SplitPage() {
 
       if (!filesRes.ok || !projectsRes.ok) throw new Error('Failed to fetch');
 
-      const filesData = await filesRes.json();
+      const { files: filesData, suggestedSplit } = await filesRes.json();
       const projectsData = await projectsRes.json();
       const project = projectsData.find(
         (p: ProjectMetrics) => p.name === projectName
       );
 
       setFiles(filesData);
+      if (
+        Array.isArray(suggestedSplit) &&
+        suggestedSplit.length === 2 &&
+        Array.isArray(suggestedSplit[0]) &&
+        Array.isArray(suggestedSplit[1])
+      ) {
+        const [leftPaths, rightPaths] = suggestedSplit as [string[], string[]];
+        const fileByPath = new Map(
+          (filesData as ProjectFile[]).map((f) => [f.file_path, f])
+        );
+
+        const suggestedLeftFiles = leftPaths
+          .map((p) => fileByPath.get(p))
+          .filter((f): f is ProjectFile => Boolean(f));
+        const suggestedRightFiles = rightPaths
+          .map((p) => fileByPath.get(p))
+          .filter((f): f is ProjectFile => Boolean(f));
+
+        setLeftFiles(suggestedLeftFiles);
+        setRightFiles(suggestedRightFiles);
+      } else {
+        setLeftFiles(undefined);
+        setRightFiles(undefined);
+      }
       setProjectMetrics(project || null);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -75,7 +105,12 @@ export default function SplitPage() {
           </p>
         )}
       </div>
-      <SplitView files={files} projectName={projectName} />
+      <SplitView
+        files={files}
+        projectName={projectName}
+        leftFiles={leftFiles}
+        rightFiles={rightFiles}
+      />
     </div>
   );
 }

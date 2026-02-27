@@ -224,6 +224,146 @@ export class ProjectViewDb {
     return touchCount * allDependents.size;
   }
 
+  /**
+   * Suggest a split of the given files into two groups such that
+   * the sum of the estimated loads of the two groups is minimized.
+   *
+   * Algorithm (hill climbing):
+   * 1. Filter to files that actually have dependent projects.
+   * 2. Randomly split these files into two groups.
+   * 3. Repeatedly try moving a single file between groups; if a move
+   *    reduces the total estimated load, keep it and continue.
+   * 4. Stop when no single-file move improves the total load.
+   * 5. Return the two groups, placing all files without dependents
+   *    into the first group.
+   */
+  async getSuggestedFileSplit(
+    filePaths: string[],
+    commitCount = 100
+  ): Promise<[string[], string[]]> {
+    if (!filePaths || filePaths.length === 0) {
+      return [[], []];
+    }
+
+    // Determine which files have dependent projects
+    const dependencyMap = await this.getProjectDependencyMapForFiles(filePaths);
+    const filesWithDeps: string[] = [];
+    const filesWithoutDeps: string[] = [];
+
+    for (const fp of filePaths) {
+      const dependents = dependencyMap[fp] || [];
+      if (dependents.length > 0) {
+        filesWithDeps.push(fp);
+      } else {
+        filesWithoutDeps.push(fp);
+      }
+    }
+
+    // If none of the files have dependents, all load is zero.
+    // Put everything into the first group.
+    if (filesWithDeps.length === 0) {
+      return [filePaths.slice(), []];
+    }
+
+    // Initial random split for files that affect load
+    const groupA: string[] = [];
+    const groupB: string[] = [];
+    for (const fp of filesWithDeps) {
+      if (Math.random() < 0.5) {
+        groupA.push(fp);
+      } else {
+        groupB.push(fp);
+      }
+    }
+
+    let loadA = await this.getEstimatedLoad(groupA, commitCount);
+    let loadB = await this.getEstimatedLoad(groupB, commitCount);
+    let totalLoad = loadA + loadB;
+
+    let improved = true;
+    while (improved) {
+      improved = false;
+      let bestDelta = 0;
+      let bestMove:
+        | {
+            fromA: boolean;
+            file: string;
+            newGroupA: string[];
+            newGroupB: string[];
+            newLoadA: number;
+            newLoadB: number;
+          }
+        | null = null;
+
+      // Try moving each file from A to B
+      for (const file of groupA) {
+        const newGroupA = groupA.filter((f) => f !== file);
+        const newGroupB = [...groupB, file];
+
+        const [candidateLoadA, candidateLoadB] = await Promise.all([
+          this.getEstimatedLoad(newGroupA, commitCount),
+          this.getEstimatedLoad(newGroupB, commitCount),
+        ]);
+
+        const candidateTotal = candidateLoadA + candidateLoadB;
+        const delta = candidateTotal - totalLoad;
+
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestMove = {
+            fromA: true,
+            file,
+            newGroupA,
+            newGroupB,
+            newLoadA: candidateLoadA,
+            newLoadB: candidateLoadB,
+          };
+        }
+      }
+
+      // Try moving each file from B to A
+      for (const file of groupB) {
+        const newGroupB = groupB.filter((f) => f !== file);
+        const newGroupA = [...groupA, file];
+
+        const [candidateLoadA, candidateLoadB] = await Promise.all([
+          this.getEstimatedLoad(newGroupA, commitCount),
+          this.getEstimatedLoad(newGroupB, commitCount),
+        ]);
+
+        const candidateTotal = candidateLoadA + candidateLoadB;
+        const delta = candidateTotal - totalLoad;
+
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestMove = {
+            fromA: false,
+            file,
+            newGroupA,
+            newGroupB,
+            newLoadA: candidateLoadA,
+            newLoadB: candidateLoadB,
+          };
+        }
+      }
+
+      // Apply the best improving move, if any
+      if (bestMove && bestDelta < 0) {
+        groupA.length = 0;
+        groupA.push(...bestMove.newGroupA);
+        groupB.length = 0;
+        groupB.push(...bestMove.newGroupB);
+        loadA = bestMove.newLoadA;
+        loadB = bestMove.newLoadB;
+        totalLoad = loadA + loadB;
+        improved = true;
+      }
+    }
+
+    // Place all files without dependents into the first group
+    return [[...groupA, ...filesWithoutDeps], groupB.slice()];
+  }
+
   async getAllProjectsMetrics(commitCount = 100): Promise<ProjectMetrics[]> {
     const [projects, commitRows] = await Promise.all([
       this.getAllProjects(),

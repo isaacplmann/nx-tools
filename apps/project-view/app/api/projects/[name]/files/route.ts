@@ -19,9 +19,10 @@ export async function GET(
     const projectName = decodeURIComponent(params.name);
     const db = new ProjectViewDb(getDbPath());
     const files = await db.getProjectFiles(projectName);
+    const suggestedSplit = await db.getSuggestedFileSplit(files.map((f) => f.file_path));
     await db.close();
 
-    return NextResponse.json(files);
+    return NextResponse.json({ files, suggestedSplit });
   } catch (error) {
     console.error('Error fetching project files:', error);
     return NextResponse.json(
