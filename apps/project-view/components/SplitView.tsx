@@ -123,6 +123,30 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
     }
   };
 
+  const moveAllFilesFromProjectToRight = (project: string) => {
+    // Get all files currently in left column that are connected to this project
+    const filesToMove = leftFiles.filter(f => f.dependents?.includes(project));
+    
+    // Remove them from left and add to right
+    setLeftFiles(prev => prev.filter(f => !filesToMove.some(tm => tm.file_path === f.file_path)));
+    setRightFiles(prev => [
+      ...prev,
+      ...filesToMove.map(f => ({ ...f, dependents: f.dependents }))
+    ]);
+  };
+
+  const moveAllFilesFromProjectToLeft = (project: string) => {
+    // Get all files currently in right column that are connected to this project
+    const filesToMove = rightFiles.filter(f => f.dependents?.includes(project));
+    
+    // Remove them from right and add to left
+    setRightFiles(prev => prev.filter(f => !filesToMove.some(tm => tm.file_path === f.file_path)));
+    setLeftFiles(prev => [
+      ...prev,
+      ...filesToMove.map(f => ({ ...f, dependents: f.dependents }))
+    ]);
+  };
+
   // Get unique projects that depend on files in each column
   const getLeftDependents = () => {
     const projects = new Set<string>();
@@ -369,9 +393,23 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
                 borderRadius: '4px',
                 fontSize: '12px',
                 cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '4px',
               }}
             >
-              {project}
+              <span style={{ flex: 1 }}>{project}</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  moveAllFilesFromProjectToRight(project);
+                }}
+                style={{ padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                title={`Move all files connected to ${project} to the right`}
+              >
+                →
+              </button>
             </div>
           );
         })}
@@ -456,9 +494,34 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
                   borderRadius: '4px',
                   fontSize: '12px',
                   cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
                 }}
               >
-                {project}
+                <span>{project}</span>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveAllFilesFromProjectToLeft(project);
+                    }}
+                    style={{ padding: '4px 8px', fontSize: '11px', flex: 1 }}
+                    title={`Move all files connected to ${project} to the left`}
+                  >
+                    ←
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveAllFilesFromProjectToRight(project);
+                    }}
+                    style={{ padding: '4px 8px', fontSize: '11px', flex: 1 }}
+                    title={`Move all files connected to ${project} to the right`}
+                  >
+                    →
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -559,9 +622,23 @@ export default function SplitView({ files, projectName }: SplitViewProps) {
                 borderRadius: '4px',
                 fontSize: '12px',
                 cursor: 'pointer',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '4px',
               }}
             >
-              {project}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  moveAllFilesFromProjectToLeft(project);
+                }}
+                style={{ padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
+                title={`Move all files connected to ${project} to the left`}
+              >
+                ←
+              </button>
+              <span style={{ flex: 1, textAlign: 'right' }}>{project}</span>
             </div>
           );
         })}
